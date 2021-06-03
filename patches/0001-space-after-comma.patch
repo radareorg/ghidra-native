@@ -1,0 +1,40 @@
+diff --git a/src/decompiler/printc.cc b/src/decompiler/printc.cc
+index 79da4cf..953e478 100644
+--- a/src/decompiler/printc.cc
++++ b/src/decompiler/printc.cc
+@@ -1837,7 +1837,7 @@ void PrintC::emitStructDefinition(const TypeStruct *ct)
+     pushTypeEnd((*iter).type);
+     iter++;
+     if (iter != ct->endField()) {
+-      emit->print(","); // Print comma separator
++      emit->print(", "); // Print comma separator
+       emit->tagLine();
+     }
+   }
+@@ -1936,7 +1936,7 @@ void PrintC::emitPrototypeInputs(const FuncProto *proto)
+     bool printComma = false;
+     for(int4 i=0;i<sz;++i) {
+       if (printComma)
+-	emit->print(",");
++	emit->print(", ");
+       ProtoParameter *param = proto->getParam(i);
+       if (isSet(hide_thisparam) && param->isThisPointer())
+ 	continue;
+@@ -1955,7 +1955,7 @@ void PrintC::emitPrototypeInputs(const FuncProto *proto)
+   }
+   if (proto->isDotdotdot()) {
+     if (sz != 0)
+-      emit->print(",");
++      emit->print(", ");
+     emit->print("...");
+   }
+ }
+@@ -2408,7 +2408,7 @@ void PrintC::emitBlockBasic(const BlockBasic *bb)
+ 	continue;
+       if (separator) {
+ 	if (isSet(comma_separate)) {
+-	  emit->print(",");
++	  emit->print(", ");
+ 	  emit->spaces(1);
+ 	}
+ 	else {

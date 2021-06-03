@@ -1,0 +1,122 @@
+From 4f44da768da3b2fa23b87c51a99a07eeb8252ea4 Mon Sep 17 00:00:00 2001
+From: Yuuoniy <linmq006@gmail.com>
+Date: Tue, 23 Mar 2021 17:35:37 +0800
+Subject: [PATCH 22/23] Show noreturn information in function signature (#2)
+
+---
+ .../src/decompile/cpp/prettyprint.cc          | 20 +++++++++++++++++++
+ .../src/decompile/cpp/prettyprint.hh          |  9 +++++++++
+ .../Decompiler/src/decompile/cpp/printc.cc    |  4 +++-
+ 3 files changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.cc b/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.cc
+index 4b687b53f..88e976626 100644
+--- a/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.cc
++++ b/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.cc
+@@ -206,6 +206,14 @@ void EmitXml::tagFuncName(const char *ptr,syntax_highlight hl,
+   *s << "</funcname>";
+ }
+ 
++/// \brief Emit a function noreturn identifier
++///
++/// An identifier string representing  noreturn information of the function is emitted
++void EmitXml::tagNoreturn(void)
++{
++  *s << "<noreturn " << highlight[(int4)no_color] << '>' << " noreturn </noreturn>";
++}
++
+ /// \brief Emit a data-type identifier
+ ///
+ /// A string representing the name of a data-type, as appropriate for the source language
+@@ -411,6 +419,9 @@ void TokenSplit::print(EmitXml *emit) const
+   case fnam_t:	// tagFuncName
+     emit->tagFuncName(tok.c_str(),hl,ptr_second.fd,op);
+     break;
++  case noret_t:
++    emit->tagNoreturn();
++    break;
+   case type_t:	// tagType
+     emit->tagType(tok.c_str(),hl,ptr_second.ct);
+     break;
+@@ -1039,6 +1050,15 @@ void EmitPrettyPrint::tagFuncName(const char *ptr,syntax_highlight hl,const Func
+   scan();
+ }
+ 
++void EmitPrettyPrint::tagNoreturn(void)
++{
++  checkstring();
++  TokenSplit &tok( tokqueue.push() );
++  tok.tagNoreturn();
++  scan();
++}
++
++
+ void EmitPrettyPrint::tagType(const char *ptr,syntax_highlight hl,const Datatype *ct)
+ 
+ {
+diff --git a/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.hh b/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.hh
+index 053ec38d0..ddd16626d 100644
+--- a/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.hh
++++ b/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.hh
+@@ -117,6 +117,7 @@ public:
+ 			    const Varnode *vn,const PcodeOp *op);
+   virtual void tagOp(const char *ptr,syntax_highlight hl,const PcodeOp *op);
+   virtual void tagFuncName(const char *ptr,syntax_highlight hl,const Funcdata *fd,const PcodeOp *op);
++  virtual void tagNoreturn(void);
+   virtual void tagType(const char *ptr,syntax_highlight hl,const Datatype *ct);
+   virtual void tagField(const char *ptr,syntax_highlight hl,const Datatype *ct,int4 off);
+   virtual void tagComment(const char *ptr,syntax_highlight hl,const AddrSpace *spc,uintb off);
+@@ -247,6 +248,8 @@ public:
+     *s << ptr; }
+   virtual void tagFuncName(const char *ptr,syntax_highlight hl,const Funcdata *fd,const PcodeOp *op) {
+     *s << ptr; }
++  virtual void tagNoreturn(void) {
++    *s << " noreturn ";}
+   virtual void tagType(const char *ptr,syntax_highlight hl,const Datatype *ct) {
+     *s << ptr; }
+   virtual void tagField(const char *ptr,syntax_highlight hl,const Datatype *ct,int4 off) {
+@@ -313,6 +316,7 @@ public:
+     vari_t,		///< A variable identifier
+     op_t,		///< An operator
+     fnam_t,		///< A function identifier
++    noret_t,		///< A function noreturn identifier
+     type_t,		///< A data-type identifier
+     field_t,		///< A field name for a structured data-type
+     comm_t,		///< Part of a comment block
+@@ -468,6 +472,10 @@ public:
+     tok = ptr; size = tok.size();
+     tagtype=fnam_t; delimtype=tokenstring; hl=h; ptr_second.fd=f; op=o; }
+ 
++  /// \brief Create a function noreturn identifiertoken
++  void tagNoreturn(void) {
++    tagtype=noret_t; delimtype=tokenstring; }
++
+   /// \brief Create a data-type identifier token
+   ///
+   /// \param ptr is the character data for the identifier
+@@ -751,6 +759,7 @@ public:
+ 			   const Varnode *vn,const PcodeOp *op);
+   virtual void tagOp(const char *ptr,syntax_highlight hl,const PcodeOp *op);
+   virtual void tagFuncName(const char *ptr,syntax_highlight hl,const Funcdata *fd,const PcodeOp *op);
++  virtual void tagNoreturn(void);
+   virtual void tagType(const char *ptr,syntax_highlight hl,const Datatype *ct);
+   virtual void tagField(const char *ptr,syntax_highlight hl,const Datatype *ct,int4 off);
+   virtual void tagComment(const char *ptr,syntax_highlight hl,
+diff --git a/Ghidra/Features/Decompiler/src/decompile/cpp/printc.cc b/Ghidra/Features/Decompiler/src/decompile/cpp/printc.cc
+index 07461326a..4c062cfee 100644
+--- a/Ghidra/Features/Decompiler/src/decompile/cpp/printc.cc
++++ b/Ghidra/Features/Decompiler/src/decompile/cpp/printc.cc
+@@ -2304,7 +2304,9 @@ void PrintC::emitFunctionDeclaration(const Funcdata *fd)
+   emitSymbolScope(fd->getSymbol());
+   emit->tagFuncName(fd->getName().c_str(),EmitXml::funcname_color,
+ 		    fd,(PcodeOp *)0);
+-
++  if (proto->isNoReturn()) {
++    emit->tagNoreturn();
++  }
+   emit->spaces(function_call.spacing,function_call.bump);
+   int4 id2 = emit->openParen('(');
+   emit->spaces(0,function_call.bump);
+-- 
+2.24.3 (Apple Git-128)
+

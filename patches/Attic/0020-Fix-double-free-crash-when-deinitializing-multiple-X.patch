@@ -1,0 +1,47 @@
+From ef6918951c768fe4fe12f55b1780a2ed4afcfc7e Mon Sep 17 00:00:00 2001
+From: pancake <pancake@nopcode.org>
+Date: Sun, 17 Jan 2021 18:31:08 +0100
+Subject: [PATCH 20/23] Fix double free crash when deinitializing multiple XML
+ parsers and avoid using non const globals
+
+---
+ Ghidra/Features/Decompiler/src/decompile/cpp/xml.cc | 2 --
+ Ghidra/Features/Decompiler/src/decompile/cpp/xml.hh | 2 +-
+ 2 files changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/Ghidra/Features/Decompiler/src/decompile/cpp/xml.cc b/Ghidra/Features/Decompiler/src/decompile/cpp/xml.cc
+index 51fb5870c..3a064d4b3 100644
+--- a/Ghidra/Features/Decompiler/src/decompile/cpp/xml.cc
++++ b/Ghidra/Features/Decompiler/src/decompile/cpp/xml.cc
+@@ -98,8 +98,6 @@
+ #include <iostream>
+ #include <string>
+ 
+-string Attributes::bogus_uri("http://unused.uri");
+-
+ /// \brief The XML character scanner
+ ///
+ /// Tokenize a byte stream suitably for the main XML parser.  The scanner expects an ASCII or UTF-8
+diff --git a/Ghidra/Features/Decompiler/src/decompile/cpp/xml.hh b/Ghidra/Features/Decompiler/src/decompile/cpp/xml.hh
+index 75e7dd9a9..93f6278d1 100644
+--- a/Ghidra/Features/Decompiler/src/decompile/cpp/xml.hh
++++ b/Ghidra/Features/Decompiler/src/decompile/cpp/xml.hh
+@@ -27,6 +27,7 @@
+ 
+ using namespace std;
+ 
++#define bogus_uri "http://unused.uri"
+ /// \brief The \e attributes for a single XML element
+ ///
+ /// A container for name/value pairs (of strings) for the formal attributes, as collected during parsing.
+@@ -34,7 +35,6 @@ using namespace std;
+ /// This also holds other properties of the element that are unused in this implementation,
+ /// including the \e namespace URI.
+ class Attributes {
+-  static string bogus_uri;		///< A placeholder for the namespace URI that should be attached to the element
+ //  static string prefix;
+   string *elementname;			///< The name of the XML element
+   vector<string *> name;		///< List of names for each formal XML attribute
+-- 
+2.24.3 (Apple Git-128)
+
