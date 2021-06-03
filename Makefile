@@ -3,8 +3,7 @@ all:
 sync: sync-processors sync-decompiler
 
 patch:
-	-git am --abort ; git am --quit
-	for a in $(shell ls patches/*.patch | sort -n) ; do echo "Apply $$a" ; git am -p5 < ../../$$a ; done
+	for a in $(shell ls patches/*.patch | sort -n) ; do patch -p1 < $$a ; done
 
 sync-decompiler decompiler-sync: ghidra
 	rm -rf src/decompiler
