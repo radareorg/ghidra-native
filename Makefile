@@ -12,6 +12,12 @@ sync-decompiler decompiler-sync: ghidra
 sync-processors processors-sync: ghidra
 	rm -rf src/Processors
 	cp -rf ghidra/Ghidra/Processors src/Processors
+	$(MAKE) sync-stm8
+
+sync-stm8:
+	git clone https://github.com/esaulenka/ghidra_STM8
+	mkdir -p src/Processors/STM8
+	cp -rf ghidra_STM8/* src/Processors/STM8
 
 ghidra:
 	git clone https://github.com/NationalSecurityAgency/ghidra

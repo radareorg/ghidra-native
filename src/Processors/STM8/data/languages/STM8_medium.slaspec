@@ -1,0 +1,6 @@
+
+# ram bus width - 16 bit
+# warning!! Suitable only for devices with <= 32kB flash!!!
+@define RAM_W	"2"
+
+@include "STM8.sinc"

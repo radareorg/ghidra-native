@@ -1,0 +1,6 @@
+
+# ram bus width - 24 bit
+# Produces a bit of unclear code, but suitable for any devices
+@define RAM_W	"3"
+
+@include "STM8.sinc"

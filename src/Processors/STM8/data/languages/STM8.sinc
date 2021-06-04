@@ -1,0 +1,1088 @@
+#
+# STM8
+#
+# ST Microelectronics 8-bit MCU
+
+
+# Opcodes overview: https://en.wikipedia.org/wiki/STM8
+
+#
+# 	Memory Architecture
+# 
+define endian=big;
+define alignment=1;
+define space RAM type=ram_space size=$(RAM_W) default;
+define space register type=register_space size=2;
+
+# this document uses following conventions: byte - 8 bits, word - 16 bits, dword - 24 bits (!!!)
+
+
+#
+#	General Registers
+#
+define register offset=0x00 size=1 [
+	CC A 	# condition flags, accumulator
+	XH XL	# X index
+	YH YL	# Y index
+];
+define register offset=0x00 size=2 [
+	_		# accumulator
+	X		# X index
+	Y   	# Y index
+];
+define register offset=0x08 size=$(RAM_W) [
+	SP		# stack pointer. Should be 16-bit, but Ghidra needs same as address space size
+];
+define register offset=0x10 size=3 [
+	PC		# program counter
+];
+# condition code fields
+@define CC_V	"CC[7,1]"	# (bit 7) overflow
+@define CC_I1	"CC[5,1]"	# (bit 5) interrupt mask level 1
+@define CC_H	"CC[4,1]"	# (bit 4) half carry bit
+@define CC_I0	"CC[3,1]"	# (bit 3) interrupt mask level 0
+@define CC_N	"CC[2,1]"	# (bit 2) negative
+@define CC_Z	"CC[1,1]"	# (bit 1) zero
+@define CC_C	"CC[0,1]"	# (bit 0) carry
+
+
+# context register to track opcodes prefix
+define register offset=0x100 size=4   contextreg;
+define context contextreg
+	ctx_prefix = (0,7)		# instruction prefix
+	ctx_phase  = (8,8)		# 0:initial, 1:instruction-parse
+;
+
+
+
+#
+# 	Tokens
+#
+define token opcode_op_prfx(8)
+	op_prfx =	(0, 7)
+;
+define token opcode(8)
+	op0_1 = 	(0, 0)
+	op0_4 = 	(0, 3)
+	op0_8 = 	(0, 7)
+	bit1_3 = 	(1, 3)
+	op4_4 =		(4, 7)
+;
+define token opcode2(8)
+	val8u = 	(0,7)
+	val8s = 	(0,7) signed 
+;
+define token opcode2w(16)
+	val16u = 	(0,15)
+	val16s = 	(0,15) signed 
+;
+define token opcode2dw(24)
+	val24u = 	(0,23)
+;
+
+
+#
+# Macros
+#
+
+# flag manipulations
+macro flagNZ(val) {
+	$(CC_N) = val s< 0;
+	$(CC_Z) = val == 0;
+}
+macro flagSubstractCV(a,b) {
+	$(CC_C) = a < b;
+	$(CC_V) = sborrow(a, b);
+}
+macro flagAddCV(a,b) {
+	$(CC_C) = carry(a,b);
+	$(CC_V) = scarry(a,b);
+}
+macro flagAdcHb(a,b,c) {
+	$(CC_H) = ( ( (a&b) | (~(a+b+c)&(a|b)) ) & 0x08 ) != 0;
+}
+macro flagAddHw(a,b) {
+	$(CC_H) = ( ( (a&b) | (~(a+b)&(a|b)) ) & 0x80 ) != 0;
+}
+macro flagSubtractHw(a,b) {
+	$(CC_H) = ( (a&b&(a-b)) | (~a&(b|(a-b))) & 0x80 ) != 0;
+}
+
+
+# commonly used operations
+
+macro pushb(val) {
+	*:1 SP = val;
+	SP = SP - 1;
+}
+macro popb(val) {
+	SP = SP + 1;
+	val = *:1 SP;
+}
+macro pushw(val) {
+	*:2 (SP - 1) = val;
+	SP = SP - 2;
+#	pushb(val[0,8]);	# sometimes it work better, sometimes not
+#	pushb(val[8,8]);
+}
+macro popw(val) {
+	SP = SP + 2;
+	val = *:2 (SP - 1);
+}
+macro pushdw(val) {
+	*:3 (SP - 2)= val;
+	SP = SP - 3;
+}
+macro popdw(val) {
+	SP = SP + 3;
+	val = *:3 (SP - 2);
+}
+
+macro exchange(a, b) {
+	local x=a; a=b; b=x;
+}
+macro load(dst, src) {
+	local x = src;
+	dst = x;
+	flagNZ(x);
+}
+
+macro substract(a, b) {
+	flagSubstractCV(a,b);
+	a = a - b;
+	flagNZ(a);
+}
+macro substractw(a, b) {
+	flagSubstractCV(a,b);
+	flagSubtractHw(a,b);
+	a = a - b;
+	flagNZ(a);
+}
+macro compare(a, b) {
+	flagSubstractCV(a,b);
+	local x = a - b;
+	flagNZ(x);
+}
+macro dec(a) {
+	$(CC_V) = sborrow(a, 1);
+	a = a - 1;
+	flagNZ(a);
+}
+macro inc(a) {
+	$(CC_V) = scarry(a,1);
+	a = a + 1;
+	flagNZ(a);
+}
+macro addb(a, b) {
+	flagAddCV(a,b);
+	flagAdcHb(a,b,0);
+	a = a + b;
+	flagNZ(a);
+}
+macro addw(a, b) {
+	flagAddCV(a,b);
+	flagAddHw(a,b);
+	a = a + b;
+	flagNZ(a);
+}
+macro substractCarry(a, b) {
+	local cc_c = $(CC_C);
+	cc_c = a < b;
+	$(CC_V) = sborrow(a, b);
+	local result = a - b;
+	$(CC_C) = $(CC_C) || (result < cc_c);
+	$(CC_V) = $(CC_V) ^^ sborrow(result, cc_c);
+	a = result - cc_c;
+	flagNZ(a);
+}
+macro addCarry(a, b) {
+	flagAdcHb(a,b,$(CC_C));
+	local cc_c = $(CC_C);
+	$(CC_C) = carry(a,b);
+	$(CC_V) = scarry(a,b);
+	local result = a + b;
+	$(CC_C) = $(CC_C) ||  carry(result, cc_c);
+	$(CC_V) = $(CC_V) ^^ scarry(result, cc_c);
+	a = result + cc_c;
+	flagNZ(a);
+}
+
+
+#####################################################
+#	Parser for instruction prefixes
+#
+
+# store prefix in context register
+:^instruction is ctx_phase=0 & op_prfx=0x72 ; instruction [ ctx_prefix=0x72; ctx_phase=1;]  { }
+:^instruction is ctx_phase=0 & op_prfx=0x90 ; instruction [ ctx_prefix=0x90; ctx_phase=1;]  { }
+:^instruction is ctx_phase=0 & op_prfx=0x91 ; instruction [ ctx_prefix=0x91; ctx_phase=1;]  { }
+:^instruction is ctx_phase=0 & op_prfx=0x92 ; instruction [ ctx_prefix=0x92; ctx_phase=1;]  { }
+:^instruction is ctx_phase=0 &                instruction [ ctx_prefix=0x00; ctx_phase=1;]  { }
+
+# prefix shortcuts
+Pre00:	is ctx_prefix=0x00 { }
+Pre72:	is ctx_prefix=0x72 { }
+Pre90:	is ctx_prefix=0x90 { }
+Pre91:	is ctx_prefix=0x91 { }
+Pre92:	is ctx_prefix=0x92 { }
+
+
+#####################################################
+#	Sub constructors
+#
+
+# immediate values
+Imm8u:	"#"^val8u		is val8u 	{ local x:1 = val8u; export x; }
+Imm16u:	"#"^val16u		is val16u 	{ local x:2 = val16u; export x; }
+
+# SP-relative addressing
+StackAddr8:		(val8u, SP) 	is val8u & SP {	local addr:$(RAM_W) = SP + val8u; export *:1 addr; }
+StackAddr8W:	(val8u, SP) 	is val8u & SP {	local addr:$(RAM_W) = SP + val8u; export *:2 addr; }
+
+# jump offset
+offset8: addr	is val8s [ addr = inst_next + val8s; ] { export *:1 addr; }
+
+# 8-bit address (shortmem)
+Addr8B:		val8u		is val8u			{ export *:1 val8u; }
+Addr8W:		val8u		is val8u			{ export *:2 val8u; }
+Addr8B_2:	val8u		is val8u			{ export *:1 val8u; }
+
+# 16-bit address (longmem)
+Addr16B:	val16u		is val16u			{ export *:1 val16u; }
+Addr16W:	val16u		is val16u			{ export *:2 val16u; }
+Addr16DW:	val16u		is val16u			{ export *:3 val16u; }
+Addr16B_2:	val16u		is val16u			{ export *:1 val16u; }
+
+# prefix 0x90 changes X and Y registers
+X_Y:   X	is Pre00 & X  { export X; } 
+X_Y:   Y	is Pre90 & Y  { export Y; } 
+XL_YL: XL	is Pre00 & XL { export XL; } 
+XL_YL: YL	is Pre90 & YL { export YL; }
+XH_YH: XH	is Pre00 & XH { export XH; } 
+XH_YH: YH	is Pre90 & YH { export YH; }
+
+# prefix 92/91 do the same
+X_Y_92: X	is Pre92 & X { export X; } 
+X_Y_92: Y	is Pre91 & Y { export Y; } 
+
+# full address
+Addr24: val24u is val24u { export *:1 val24u; }
+
+
+
+
+
+#####################################################
+# Miscellaneous instructions
+#
+
+# -		1000 0000			IRET		Return from interrupt (pop CC, A, X, Y, PC)
+:IRET				is Pre00 & op0_8=0x80 {
+	popb(CC);
+	popb(A);
+	popw(X);
+	popw(Y);
+	popdw(PC);
+	return [PC];
+}
+# -		1000 0001			RET			Pop 16-bit return address from stack to PC
+:RET				is Pre00 & op0_8=0x81 {
+	local x:2; popw(x);
+	# PC = (PC & 0xFF0000) | x; ???
+	return [x];
+}
+# -		1000 0010	addr24	INT			Special jump for interrupt vector table
+:INT Addr24			is Pre00 & op0_8=0x82 ; Addr24 {
+	goto Addr24;
+}
+# -		1000 0011			TRAP		Force trap interrupt
+define pcodeop __TrapInterrupt;
+:TRAP				is Pre00 & op0_8=0x83 {
+	__TrapInterrupt();
+}
+# -		1000 0100			POP A		Pop A from stack
+:POP A				is Pre00 & op0_8=0x84 & A {
+	popb(A);
+}
+# -/90	1000 0101			POPW X/Y	Pop X/Y from stack (16 bits)
+:POPW X_Y			is op0_8=0x85 & X_Y {
+	popw(X_Y);
+}
+# -		1000 0110			POP CC		Pop condition codes from stack
+:POP CC			is Pre00 & op0_8=0x86 & CC {
+	popb(CC);
+}
+# -		1000 0111			RETF		Pop 24-bit return address from stack to PC
+:RETF				is Pre00 & op0_8=0x87 {
+	popdw(PC);
+	return [PC];
+}
+# -		1000 1000			PUSH A		Push A onto stack
+:PUSH A				is Pre00 & op0_8=0x88 & A {
+	pushb(A);
+}
+# -/90	1000 1001			PUSHW X/Y	Push X/Y onto stack (16 bits)
+:PUSHW X_Y			is op0_8=0x89 & X_Y {
+	pushw(X_Y);
+}
+# -		1000 1010			PUSH CC		Push condition codes onto stack
+:PUSH CC			is Pre00 & op0_8=0x8A & CC {
+	pushb(CC);
+}
+# -		1000 1011			BREAK		Stop for debugger if present, or NOP
+define pcodeop __DebugBreak;
+:BREAK				is Pre00 & op0_8=0x8B {
+	__DebugBreak();
+}
+# -		1000 1100			CCF			Complement (toggle) carry flag
+:CCF				is Pre00 & op0_8=0x8C {
+	$(CC_C) = ! $(CC_C);
+}
+# -		1000 1101	addr24	CALLF addr24	Push 24-bit PC; PC := addr24
+:CALLF Addr24		is Pre00 & op0_8=0x8D ; Addr24 {
+	local pc:3 = inst_next;
+	pushdw(pc);
+	call Addr24;
+}
+# 92	1000 1101	addr16	CALLF [addr16]	Indirect far call; address is of 24-bit pointer
+:CALLF [Addr16DW]	is Pre92 & op0_8=0x8D ; Addr16DW {
+	local pc:3 = inst_next;
+	pushdw(pc);
+	call Addr16DW;
+}
+# -		1000 1110			HALT		Halt processor and clocks
+define pcodeop __Halt;
+:HALT				is Pre00 & op0_8=0x8E {
+	$(CC_I1) = 1; $(CC_I0) = 0;
+	__Halt();
+}
+# -		1000 1111			WFI			Wait for interrupt, halting processor but not clocks
+define pcodeop __WaitForInterrupt;
+:WFI				is Pre00 & op0_8=0x8F {
+	$(CC_I1) = 1; $(CC_I0) = 0;
+	__WaitForInterrupt();
+}
+# 72	1000 1111			WFE			Wait for event (coprocessor), handling interrupts normally while waiting
+define pcodeop __WaitForEvent;
+:WFE				is Pre72 & op0_8=0x8F {
+	__WaitForEvent();
+}
+
+# -/90	1001 0011			LDW X/Y,Y/X	X/Y := Y/X
+:LDW X, Y			is Pre00 & op0_8=0x93 & X & Y {
+	X = Y;
+}
+:LDW Y, X			is Pre90 & op0_8=0x93 & X & Y {
+	Y = X;
+}
+# -/90	1001 0100			LDW SP,X/Y	SP := X/Y
+:LDW SP, X_Y		is op0_8=0x94 & SP & X_Y {
+	SP = zext(X_Y);
+}
+# -/90	1001 0101			LD XH/YH,A	XH/YH := A
+:LD XH_YH, A		is op0_8=0x95 & XH_YH & A {
+	XH_YH = A;
+}
+# -/90	1001 0110			LDW X/Y,SP	X/Y := SP
+:LDW X_Y, SP		is op0_8=0x96 & X_Y & SP {
+	X_Y = SP:2;
+}
+# -/90	1001 0111			LD XL/YL,A	XL/YL := A
+:LD XL_YL, A		is op0_8=0x97 & XL_YL & A {
+	XL_YL = A;
+}
+# -		1001 1000			RCF			Reset (clear) carry flag
+:RCF				is Pre00 & op0_8=0x98 {
+	$(CC_C) = 0;
+}
+# -		1001 1001			SCF			Set carry flag
+:SCF				is Pre00 & op0_8=0x99 {
+	$(CC_C) = 1;
+}
+# -		1001 1010			RIM			Reset interrupt mask (enable interrupts)
+:RIM				is Pre00 & op0_8=0x9A {
+	$(CC_I1) = 1;
+	$(CC_I0) = 0;
+}
+# -		1001 1011			SIM			Set interrupt mask (disable interrupts)
+:SIM				is Pre00 & op0_8=0x9B {
+	$(CC_I1) = 1;
+	$(CC_I0) = 1;
+}
+# -		1001 1100			RVF			Reset (clear) overflow flag
+:RVF				is Pre00 & op0_8=0x9C {
+	$(CC_V) = 0;
+}
+# -		1001 1101			NOP			No operation
+define pcodeop __Nop;
+:NOP				is Pre00 & op0_8=0x9D {
+	__Nop();
+}
+# -/90	1001 1110			LD A,XH/YH	A := XH/YH
+:LD A, XH_YH		is op0_8=0x9E & A & XH_YH {
+	A = XH_YH;
+}
+# -/90	1001 1111			LD A,XL/YL	A := XL/YL
+:LD A, XL_YL		is op0_8=0x9F & A & XL_YL {
+	A = XL_YL;
+}
+
+
+#####################################################
+# Two-operand instructions with stack operand
+#
+
+#-		0001 0000	addr8	SUB A,(addr8,SP)	A := A - operand
+:SUB A, StackAddr8		is Pre00 & op0_8=0x10 & A ; StackAddr8 {
+	substract(A, StackAddr8);
+}
+#-		0001 0001	addr8	CP A,(addr8,SP)		Compare A - operand
+:CP A, StackAddr8		is Pre00 & op0_8=0x11 & A ; StackAddr8 {
+	compare(A, StackAddr8);
+}
+#-		0001 0010	addr8	SBC A,(addr8,SP)	A := A - operand - C subtract with borrow
+:SBC A, StackAddr8		is Pre00 & op0_8=0x12 & A ; StackAddr8 {
+	substractCarry(A, StackAddr8);
+}
+#-/90	0001 0011	addr8	CPW X/Y,(addr8,SP)	Compare X/Y - operand (16-bit)
+:CPW X_Y, StackAddr8W	is Pre00 & op0_8=0x13 ; StackAddr8W & X_Y {
+	compare(X_Y, StackAddr8W);
+}
+#-		0001 0100	addr8	AND A,(addr8,SP)	A := A & operand, bitwise and
+:AND A, StackAddr8		is Pre00 & op0_8=0x14 & A ; StackAddr8 {
+	A = A & StackAddr8;
+	flagNZ(A);
+}
+#-		0001 0101	addr8	BCP A,(addr8,SP)	Bitwise test A & operand
+:BCP A, StackAddr8		is Pre00 & op0_8=0x15 & A ; StackAddr8 {
+	local x = A & StackAddr8;
+	flagNZ(x);
+}
+#-		0001 0110	addr8	LDW Y,(addr8,SP)	Y := operand (LD A,(addr8,SP) assigned to opcode 7B)
+:LDW Y, StackAddr8W		is Pre00 & op0_8=0x16 & Y ; StackAddr8W {
+	load(Y, StackAddr8W);
+}
+#-		0001 0111	addr8	LDW (addr8,SP),Y	Operand := Y (LD (addr8,SP),A assigned to opcode 6B)
+:LDW StackAddr8W, Y		is Pre00 & op0_8=0x17 & Y ; StackAddr8W {
+	load(StackAddr8W, Y);
+}
+#-		0001 1000	addr8	XOR A,(addr8,SP)	A := A ^ operand, exclusive-or
+:XOR A, StackAddr8		is Pre00 & op0_8=0x18 & A ; StackAddr8 {
+	A = A ^ StackAddr8;
+	flagNZ(A);
+}
+#-		0001 1001	addr8	ADC A,(addr8,SP)	A := A + operand + C, add with carry
+:ADC A, StackAddr8		is Pre00 & op0_8=0x19 & A ; StackAddr8 {
+	addCarry(A, StackAddr8);
+}
+#-		0001 1010	addr8	OR A,(addr8,SP)		A := A | operand inclusive or
+:OR A, StackAddr8		is Pre00 & op0_8=0x1A & A ; StackAddr8 {
+	A = A | StackAddr8;
+	flagNZ(A);
+}
+#-		0001 1011	addr8	ADD A,(addr8,SP)	A := A + operand
+:ADD A, StackAddr8		is Pre00 & op0_8=0x1B & A ; StackAddr8 {
+	addb(A, StackAddr8);
+}
+# implemented as a common case (see below)
+##-		0001 1110	addr8	LDW X,(addr8,SP)	X := operand
+#:LDW X, StackAddr8W		is Pre00 & op0_8=0x1E & X ; StackAddr8W {
+#		load(X, StackAddr8W);
+#}
+##-		0001 1111	addr8	LDW (addr8,SP),X	Operand := X
+#:LDW StackAddr8W, X		is Pre00 & op0_8=0x1F & X ; StackAddr8W {
+#	load(StackAddr8W, X);
+#}
+
+
+#####################################################
+# Bit operations
+#
+BitNo:	"#"^bit1_3	is bit1_3	{ local x:1 = bit1_3; export x; }
+# 72	0000 bit 0	addr16 soff8	BTJT addr16,#bit,label	Jump to PC + soff8 if source bit is true (set)
+:BTJT Addr16B, BitNo, offset8 	is Pre72 & op4_4=0 & BitNo & op0_1=0 ; Addr16B ; offset8 {
+	$(CC_C) = (Addr16B & (1 << BitNo)) != 0;
+	if ($(CC_C)) goto offset8;
+}
+# 72	0000 bit 1	addr16 soff8	BTJF addr16,#bit,label	Jump to PC + soff8 if source bit is false (clear)
+:BTJF Addr16B, BitNo, offset8 	is Pre72 & op4_4=0 & BitNo & op0_1=1 ; Addr16B ; offset8 {
+	$(CC_C) = (Addr16B & (1 << BitNo)) != 0;
+	if (!$(CC_C)) goto offset8;
+}
+# 72	0001 bit 0	addr16			BSET addr16,#bit		Set specified bit to 1
+:BSET Addr16B, BitNo			is Pre72 & op4_4=1 & BitNo & op0_1=0 ; Addr16B {
+	Addr16B = Addr16B | (1 << BitNo);
+}
+# 72	0001 bit 1	addr16			BRES addr16,#bit		Reset (clear) specified bit to 0
+:BRES Addr16B, BitNo			is Pre72 & op4_4=1 & BitNo & op0_1=1 ; Addr16B {
+	Addr16B = Addr16B & ~(1 << BitNo);
+}
+# 90	0001 bit 0	addr16			BCPL addr16,#bit		Complement (toggle) selected bit
+:BCPL Addr16B, BitNo			is Pre90 & op4_4=1 & BitNo & op0_1=0 ; Addr16B {
+	Addr16B = Addr16B ^ (1 << BitNo);
+}
+# 90	0001 bit 1	addr16			BCCM addr16,#bit		Write carry flag to memory bit
+:BCCM Addr16B, BitNo			is Pre90 & op4_4=1 & BitNo & op0_1=1 ; Addr16B {
+	if ($(CC_C)) goto <set>;
+		Addr16B = Addr16B & ~(1 << BitNo);
+		goto inst_next;
+	<set>
+		Addr16B = Addr16B | (1 << BitNo);
+}
+
+
+#####################################################
+# Jump instruction
+#
+
+# branch conditions
+Jcond: "A"		is Pre00 & op0_4=0x0	{ local x:1 = 1; export x; }						# Branch always (true)
+Jcond: "F"		is Pre00 & op0_4=0x1	{ local x:1 = 0; export x; }						# Branch never (false)
+Jcond: "UGT"	is Pre00 & op0_4=0x2	{ local x:1 = !$(CC_C) && !$(CC_Z); export x; }		# Branch if unsigned greater than (C=0 and Z=0)
+Jcond: "ULE"	is Pre00 & op0_4=0x3	{ local x:1 =  $(CC_C) ||  $(CC_Z); export x; }		# Branch if unsigned less than or equal (C=1 or Z=1)
+Jcond: "NC"		is Pre00 & op0_4=0x4	{ local x:1 = !$(CC_C); export x; }					# Branch if no carry (C=0)
+Jcond: "C"		is Pre00 & op0_4=0x5	{ local x:1 =  $(CC_C); export x; }					# Branch if carry (C=1)
+Jcond: "NE"		is Pre00 & op0_4=0x6	{ local x:1 = !$(CC_Z); export x; }					# Branch if not equal (Z=0)
+Jcond: "EQ"		is Pre00 & op0_4=0x7	{ local x:1 =  $(CC_Z); export x; }					# Branch if equal (Z=1)
+Jcond: "NV"		is Pre00 & op0_4=0x8	{ local x:1 = !$(CC_V); export x; }					# Branch if not overflow (V=0)
+Jcond: "V"		is Pre00 & op0_4=0x9	{ local x:1 =  $(CC_V); export x; }					# Branch if overflow (V=1)
+Jcond: "PL"		is Pre00 & op0_4=0xA	{ local x:1 = !$(CC_N); export x; }					# Branch if plus (N=0)
+Jcond: "MI"		is Pre00 & op0_4=0xB	{ local x:1 =  $(CC_N); export x; }					# Branch if minus (N=1)
+Jcond: "SGT"	is Pre00 & op0_4=0xC	{ local x:1 = !$(CC_Z) && $(CC_N)==$(CC_V); export x; }	# Branch if signed greater than (Z=0 and N=V)
+Jcond: "SLE"	is Pre00 & op0_4=0xD	{ local x:1 =  $(CC_Z) || $(CC_N)!=$(CC_V); export x; }	# Branch if signed lower or equal (Z=1 or N!=V)
+Jcond: "SGE"	is Pre00 & op0_4=0xE	{ local x:1 = $(CC_N)==$(CC_V); export x; }			# Branch if signed greater or equal (N=V)
+Jcond: "SLT"	is Pre00 & op0_4=0xF	{ local x:1 = $(CC_N)!=$(CC_V); export x; }			# Branch if signed less than (N!=V)
+
+Jcond: "NH"		is Pre90 & op0_4=0x8	{ local x:1 = !$(CC_V); export x; }					# Branch if not half-carry (H=0)
+Jcond: "H"		is Pre90 & op0_4=0x9	{ local x:1 =  $(CC_V); export x; }					# Branch if half-carry (H=1)
+Jcond: "NM"		is Pre90 & op0_4=0xC	{ local x:1 = !($(CC_I0) || $(CC_I1)); export x; }	# Branch if not interrupt mask (I=0)
+Jcond: "M"		is Pre90 & op0_4=0xD	{ local x:1 =  ($(CC_I0) || $(CC_I1)); export x; }	# Branch if interrupts masked (I=1)
+# strange branches
+#Jcond: "IL"	is Pre90 & op0_4=0xE	{ local x:1 = ??; export x; }						# Branch if interrupt line is low
+#Jcond: "IH"	is Pre90 & op0_4=0xF	{ local x:1 = ??; export x; }						# Branch if interrupt line is high
+
+:JR^Jcond offset8	is Jcond & op4_4=0x2 ; offset8 {
+	if (Jcond) goto offset8;
+}
+:JRA offset8		is Pre00 & op4_4=0x2 & op0_4=0x0 ; offset8 {
+	goto offset8;
+}
+
+
+
+#####################################################
+# Index register arithmetic (16-bit) X/Y := X/Y +/- operand
+#
+
+# 72  1010 opcode	imm16	OPW X/Y,#imm16		16-bit immediate
+IdxOp: Imm16u		is op4_4=0xA ; Imm16u 		{ export Imm16u; }
+# 72  1011 opcode	addr16	OPW X/Y,addr16		16-bit absolute
+IdxOp: Addr16W		is op4_4=0xB ; Addr16W 		{ export Addr16W; }
+# 72  1111 opcode	addr8	OPW X/Y,(addr8,SP)	Stack-relative
+IdxOp: StackAddr8W	is op4_4=0xF ; StackAddr8W	{ export StackAddr8W; }
+
+# 72	mode 0000	oper	SUBW X,operand		X := X - operand (prefer opcode 1D for SUBW X,#imm16)
+:SUBW X, IdxOp		is Pre72 & op0_4=0x0 ... & IdxOp & X {
+	substractw(X, IdxOp);
+}
+#-		0001 1101	imm16	SUBW X,#imm16		X := X - immediate (=CALL (addr8,SP))
+:SUBW X, val16u		is Pre00 & op0_8=0x1D & X ; val16u {
+	substractw(X, val16u);
+}
+# 72	mode 0010	oper	SUBW Y,operand		Y := Y - operand
+:SUBW Y, IdxOp		is Pre72 & op0_4=0x2 ... & IdxOp & Y {
+	substractw(Y, IdxOp);
+}
+
+# 72	mode 1001	oper	ADDW Y,operand		Y := Y + operand
+:ADDW Y, IdxOp		is Pre72 & op0_4=0x9 ... & IdxOp & Y {
+	addw(Y, IdxOp);
+}
+# 72	mode 1011	oper	ADDW X,operand		X := X + operand (prefer opcode 1C for ADDW X,#imm16)
+:ADDW X, IdxOp		is Pre72 & op0_4=0xB ... & IdxOp & X {
+	addw(X, IdxOp);
+}
+#-		0001 1100	imm16	ADDW X,#imm16		X := X + immediate (=JP (addr8,SP))
+:ADDW X, val16u		is Pre00 & op0_8=0x1C & X ; val16u {
+	addw(X, val16u);
+}
+
+
+#####################################################
+# One operand instructions
+#
+
+#
+# Reassigned from one-operand
+#
+# -/90	0000 0001			RRWA X/Y		Rotate word right through A: 8-bit right rotate of 24-bit concatenation of X/Y and A; (X:A) := (A:X)
+:RRWA X_Y			is op0_8=0x01 & X_Y {
+	local a:2 = zext(A);
+	A = X_Y:1;
+	X_Y = (a << 8) | (X_Y >> 8);
+	flagNZ(X_Y);
+}
+# -		0011 0001	addr16	EXG A,addr16	Exchange A with memory
+:EXG A, Addr16B		is Pre00 & op0_8=0x31 & A ; Addr16B {
+	exchange(A, Addr16B);
+}
+# -		0100 0001			EXG A,XL		Exchange A with X (low half)
+:EXG A, XL			is Pre00 & op0_8=0x41 & A & XL {
+	exchange(A, XL);
+}
+# -		0101 0001			EXGW X,Y		Exchange X with Y (16 bits)
+:EXGW X, Y			is Pre00 & op0_8=0x51 & X & Y {
+	exchange(X, Y);
+}
+# -		0110 0001			EXG A,YL		Exchange A with Y (low half)
+:EXG A, YL			is Pre00 & op0_8=0x61 & A & YL {
+	exchange(A, YL);
+}
+# -/90	0000 0010			RLWA X/Y		Rotate word left through A: 8-bit left rotate of 24-bit concatenation of X/Y and A; (A:X) := (X:A)
+:RLWA X_Y			is op0_8=0x02 & X_Y {
+	local a:2 = zext(A);
+	A = X_Y[8,8];
+	X_Y = (X_Y << 8) | a;
+	flagNZ(X_Y);
+}
+# -		0011 0010	addr16	POP addr16		Pop from stack
+:POP Addr16B		is Pre00 & op0_8=0x32 ; Addr16B {
+	popb(Addr16B);
+}
+# -/90	0100 0010			MUL X/Y,A		X/Y := XL/YL x A
+:MUL X_Y, A			is op0_8=0x42 & X_Y & A {
+	X_Y = (X_Y & 0xFF) * zext(A);
+	$(CC_C) = 0; $(CC_H) = 0;
+}
+# -		0101 0010	imm8	SUBW SP,#imm	SP := SP - imm8
+:SUBW SP, Imm8u		is Pre00 & op0_8=0x52 & SP ; Imm8u {
+	SP = SP - zext(Imm8u);
+}
+# -/90	0110 0010			DIV X/Y,A		Divide X/Y by A; 16-bit quotient in X/Y, remainder in A
+:DIV X_Y, A			is op0_8=0x62 & X_Y & A {	
+	local quot = X_Y / zext(A);
+	local rem = X_Y % zext(A);
+	$(CC_C) = (A == 0);
+	X_Y = quot;
+	A = rem:1;
+	$(CC_V) = 0; $(CC_H) = 0; $(CC_N) = 0;
+	$(CC_Z) = (X_Y == 0);
+}
+# -		0011 0101	imm8 addr16		MOV addr16,#imm8	Move immediate to memory (flags unaffected)
+:MOV Addr16B, Imm8u	is Pre00 & op0_8=0x35 ; Imm8u ; Addr16B {
+	Addr16B = Imm8u;
+}
+# -		0100 0101	addr8 addr8		MOV addr8,addr8		Move memory to memory (flags unaffected)
+:MOV Addr8B, Addr8B_2	is Pre00 & op0_8=0x45 ; Addr8B_2 ; Addr8B {
+	Addr8B = Addr8B_2;
+}
+# -		0101 0101	addr16 addr16	MOV addr16,addr16	Move memory to memory (flags unaffected)
+:MOV Addr16B, Addr16B_2	is Pre00 & op0_8=0x55 ; Addr16B_2 ; Addr16B {
+	Addr16B = Addr16B_2;
+}
+# -		0110 0101	-		DIVW X,Y		Divide X by Y (16 bits); quotient in X, remainder in Y
+:DIVW X, Y			is Pre00 & op0_8=0x65 & X & Y {
+	local quot = X / Y;
+	local rem = X % Y;
+	$(CC_C) = (Y == 0);
+	X = quot;
+	Y = rem;
+	$(CC_V) = 0; $(CC_H) = 0; $(CC_N) = 0;
+	$(CC_Z) = (X == 0);
+}
+# -		0011 1011	addr16	PUSH addr16		Push onto stack
+:PUSH Addr16B		is Pre00 & op0_8=0x3B ; Addr16B {
+	pushb(Addr16B);
+}
+# -		0100 1011	imm8	PUSH #imm8		Push onto stack
+:PUSH Imm8u			is Pre00 & op0_8=0x4B ; Imm8u {
+	pushb(Imm8u);
+}
+# -		0101 1011	imm8	ADDW SP,#imm8	SP := SP + imm8
+:ADDW SP, Imm8u		is Pre00 & op0_8=0x5B & SP ; Imm8u {
+	SP = SP + zext(Imm8u);
+}
+# -		0110 1011	addr8	LD (addr8,SP),A	Store relative to stack
+:LD StackAddr8, A	is Pre00 & op0_8=0x6B & A ; StackAddr8 {
+	load(StackAddr8, A);
+}
+# -		0111 1011	addr8	LD A,(addr8,SP)	Load relative to stack
+:LD A, StackAddr8	is Pre00 & op0_8=0x7B & A ; StackAddr8 {
+	load(A, StackAddr8);
+}
+
+
+# one-operand instructions addressing modes (8-bit operations)
+# -		0000 opcode	addr8	OP (addr8,SP)		Stack pointer relative
+OneOp: StackAddr8	is Pre00 & op4_4=0x0; StackAddr8	{ export StackAddr8; }
+# -		0011 opcode	addr8	OP addr8			8-bit absolute address
+OneOp: Addr8B		is Pre00 & op4_4=0x3; Addr8B		{ export Addr8B; }
+# 72	0011 opcode	addr16	OP [addr16]			16-bit indirect address
+OneOp: [Addr16W]	is Pre72 & op4_4=0x3; Addr16W		{ local addr:$(RAM_W)=zext(Addr16W); export *:1 addr; }
+# 92	0011 opcode	addr8	OP [addr8]			8-bit indirect address of 16-bit address
+OneOp: [Addr8W] 	is Pre92 & op4_4=0x3; Addr8W		{ local addr:$(RAM_W) = zext(Addr8W); export *:1 addr; }
+# -		0100 opcode	-		OP A				Accumulator
+OneOp: A			is Pre00 & op4_4=0x4 & A			{ export A; }
+# 72/90	0100 opcode	addr16	OP (addr16,X/Y)		Indexed with 16-bit offset
+OneOp: (Addr16B, X)	is Pre72 & op4_4=0x4 & X; Addr16B	{ local addr:$(RAM_W) = zext(X) + &Addr16B; export *:1 addr; }
+OneOp: (Addr16B, Y)	is Pre90 & op4_4=0x4 & Y; Addr16B	{ local addr:$(RAM_W) = zext(Y) + &Addr16B; export *:1 addr; }
+# 72	0101 opcode	addr16	OP addr16			16-bit address
+OneOp: Addr16B		is Pre72 & op4_4=0x5 ; Addr16B		{ export Addr16B; }
+# -/90	0110 opcode	addr8	OP (addr8,X/Y)		8-bit address plus X/Y
+OneOp: (val8u, X_Y)	is         op4_4=0x6 & X_Y ; val8u	{ local addr:$(RAM_W) = zext(X_Y) + val8u; export *:1 addr; }
+# 72	0110 opcode	addr16	OP ([addr16],X)		16-bit indirect address plus X
+OneOp: ([Addr16W], X) is Pre72 & op4_4=0x6 & X; Addr16W	{ local addr:$(RAM_W) = zext(X) + zext(Addr16W); export *:1 addr;  }
+# 92/91	0110 opcode	addr8	OP ([addr8],X/Y)	8-bit indirect address plus X/Y
+OneOp: ([Addr8W], X_Y_92) is op4_4=0x6 & X_Y_92; Addr8W	{ local addr:$(RAM_W) = zext(X_Y_92) + zext(Addr8W); export *:1 addr; }
+# -/90	0111 opcode	-		OP (X/Y)			Indexed with no offset
+OneOp: (X_Y)		is           op4_4=0x7 & X_Y		{ export *:1 X_Y; }
+
+# one-operand instructions only one addressing mode (16-bit operations)
+# -/90	0101 opcode	-		OPW X/Y				X/Y register (16-bit operation)
+OneOpW: X_Y			is           op4_4=0x5 & X_Y		{ export X_Y; }
+
+
+# prefix	0 mode 0000	operand		NEG operand	Two's-complement negate
+:NEG OneOp		is op0_4=0x0 ... & OneOp {
+	$(CC_V) = (OneOp == 0x80);
+	$(CC_C) = (OneOp != 0x00);
+	OneOp = -OneOp;
+	flagNZ(OneOp);
+}
+:NEGW OneOpW	is op0_4=0x0 & OneOpW {
+	$(CC_V) = (OneOpW == 0x8000);
+	$(CC_C) = (OneOpW != 0x0000);
+	OneOpW = -OneOpW;
+	flagNZ(OneOpW);
+}
+
+# prefix	0 mode 0011	operand		CPL operand	Ones' complement, logical not
+:CPL OneOp		is op0_4=0x3 ... & OneOp {
+	OneOp = ~OneOp;
+	flagNZ(OneOp);
+	$(CC_C) = 1;
+}
+:CPLW OneOpW	is op0_4=0x3 & OneOpW {
+	OneOpW = ~OneOpW;
+	flagNZ(OneOpW);
+	$(CC_C) = 1;
+}
+
+# prefix	0 mode 0100	operand		SRL operand	Shift right logical, msbit cleared, lsbit to carry: (operand:C) := (0:operand)
+:SRL OneOp		is op0_4=0x4 ... & OneOp {
+	$(CC_C) = (OneOp & 0x01) != 0;
+	OneOp = OneOp >> 1;
+	flagNZ(OneOp);
+}
+:SRLW OneOpW	is op0_4=0x4 & OneOpW {
+	$(CC_C) = (OneOpW & 0x01) != 0;
+	OneOpW = OneOpW >> 1;
+	flagNZ(OneOpW);
+}
+
+# prefix	0 mode 0110	operand		RRC operand	Rotate right through carry, (operand:C) := (C:operand)
+:RRC OneOp		is op0_4=0x6 ... & OneOp {
+	local msb:1 = $(CC_C) << 7;
+	$(CC_C) = (OneOp & 0x01) != 0;
+	OneOp = msb | (OneOp >> 1);
+	flagNZ(OneOp);
+}
+:RRCW OneOpW	is op0_4=0x6 & OneOpW {
+	local msb:2 = zext($(CC_C)) << 15;
+	$(CC_C) = (OneOpW & 0x01) != 0;
+	OneOpW = msb | (OneOpW >> 1);
+	flagNZ(OneOpW);
+}
+
+# prefix	0 mode 0111	operand		SRA operand	Shift right arithmetic, msbit preserved, lsbit to carry
+:SRA OneOp		is op0_4=0x7 ... & OneOp {
+	$(CC_C) = (OneOp & 0x01) != 0;
+	OneOp = OneOp s>> 1;
+	flagNZ(OneOp);
+}
+:SRAW OneOpW	is op0_4=0x7 & OneOpW {
+	$(CC_C) = (OneOpW & 0x01) != 0;
+	OneOpW = OneOpW s>> 1;
+	flagNZ(OneOpW);
+}
+
+# prefix	0 mode 1000	operand		SLL operand	Shift left, msbit to carry: (C:operand) := (operand:0)
+:SLL OneOp		is op0_4=0x8 ... & OneOp {
+	$(CC_C) = (OneOp & 0x80) != 0;
+	OneOp = OneOp << 1;
+	flagNZ(OneOp);
+}
+:SLLW OneOpW	is op0_4=0x8 & OneOpW {
+	$(CC_C) = (OneOpW & 0x8000) != 0;
+	OneOpW = OneOpW << 1;
+	flagNZ(OneOpW);
+}
+
+# prefix	0 mode 1001	operand		RLC operand	Rotate left through carry, (C:operand) := (operand,C)
+:RLC OneOp		is op0_4=0x9 ... & OneOp {
+	local lsb:1 = $(CC_C);
+	$(CC_C) = (OneOp & 0x80) != 0;
+	OneOp = (OneOp << 1) | lsb;
+	flagNZ(OneOp);
+}
+:RLCW OneOpW	is op0_4=0x9 & OneOpW {
+	local lsb:2 = zext($(CC_C));
+	$(CC_C) = (OneOpW & 0x8000) != 0;
+	OneOpW = (OneOpW << 1) | lsb;
+	flagNZ(OneOpW);
+}
+
+# prefix	0 mode 1010	operand		DEC operand	Decrement; N and Z set, carry unaffected
+:DEC OneOp		is op0_4=0xA ... & OneOp {
+	dec(OneOp);
+}
+:DECW OneOpW	is op0_4=0xA & OneOpW {
+	dec(OneOpW);
+}
+
+# prefix	0 mode 1100	operand		INC operand	Increment; N and Z set, carry unaffected
+:INC OneOp		is op0_4=0xC ... & OneOp {
+	inc(OneOp);
+}
+:INCW OneOpW	is op0_4=0xC & OneOpW {
+	inc(OneOpW);
+}
+
+# prefix	0 mode 1101	operand		TNZ operand	Test non-zero: set N and Z based on operand value
+:TNZ OneOp		is op0_4=0xD ... & OneOp {
+	flagNZ(OneOp);
+}
+:TNZW OneOpW		is op0_4=0xD & OneOpW {
+	flagNZ(OneOpW);
+}
+
+# prefix	0 mode 1110	operand		SWAP operand	Swap halves of operand (4-bit rotate; 8-bit for SWAPW X and SWAPW Y)
+:SWAP OneOp		is op0_4=0xE ... & OneOp {
+	OneOp = (OneOp << 4) | (OneOp >> 4);
+	flagNZ(OneOp);
+}
+:SWAPW OneOpW	is op0_4=0xE & OneOpW {
+	OneOpW = (OneOpW << 8) | (OneOpW >> 8);
+	flagNZ(OneOpW);
+}
+
+# prefix	0 mode 1111	operand		CLR operand	Set operand to 0, N cleared, Z set
+:CLR OneOp		is op0_4=0xF ... & OneOp {
+	OneOp = 0;
+	flagNZ(0:1);
+}
+:CLRW OneOpW	is op0_4=0xF & OneOpW {
+	OneOpW = 0;
+	flagNZ(0:2);
+}
+
+
+
+
+
+#####################################################
+# Two operand instructions A = A (op) operand
+#
+
+
+#
+# Reassigned opcodes from two-operand range. Should be in front of the others
+#
+
+# -/90	1010 0111  addr24	LDF (addr24,X/Y),A		Load far (=LD #imm8,A)
+:LDF (Addr24, X_Y), A		is X_Y & op0_8=0xA7 ; Addr24 & A {
+	local addr:$(RAM_W) = &Addr24 + zext(X_Y);
+	*:1 addr = A;	# why load not working??
+	flagNZ(A);
+}
+# 92/91	1010 0111  addr16	LDF ([addr16],X/Y),A	16-bit address of 24-bit pointer
+:LDF ([Addr16DW], X_Y_92), A	is X_Y_92 ; op0_8=0xA7 ; Addr16DW & A {
+	local addr:$(RAM_W) = Addr16DW:$(RAM_W) + zext(X_Y_92);
+	*:1 addr = A;	# why load not working??
+	flagNZ(A);
+}
+# -		1010 1100  addr24	JPF addr24				PC := addr24 (=JP #imm8)
+:JPF Addr24				is Pre00 & op0_8=0xAC ; Addr24 {
+	PC = & Addr24;
+	goto Addr24;
+}
+# 92	1010 1100  addr16	JPF [addr16]			Indirect far jump; address is of 24-bit pointer
+:JPF [Addr16DW]			is Pre92 & op0_8=0xAC ; Addr16DW {
+	local addr = Addr16DW;
+	PC = addr;
+	goto [addr];
+}
+# -		1011 1100  addr24	LDF A,addr24			Load far (=JP addr8)
+:LDF A, Addr24			is Pre00 & op0_8=0xBC ; Addr24 & A {
+	load(A, Addr24);
+}
+# 92	1011 1100  addr16	LDF A,[addr16]			Load far, 16-bit address of 24-bit pointer
+:LDF A, [Addr16DW]		is Pre92 & op0_8=0xBC ; Addr16DW & A {
+	local addr:$(RAM_W) = Addr16DW:$(RAM_W);
+	load(A, *:1 addr);
+}
+# -		1010 1101  soff8	CALLR label				Push 16-bit PC, PC := PC + operand (=CALL #imm8)
+:CALLR offset8			is Pre00 & op0_8=0xAD ; offset8 {
+	local pc:2 = inst_next; pushw(pc);
+	call offset8;
+}
+# -		1011 1101  addr24	LDF addr24,A			Operand := A (=CALL addr8)
+:LDF Addr24, A			is Pre00 & op0_8=0xBD ; Addr24 & A {
+	load(Addr24, A);
+}
+# 92	1011 1101  addr16	LDF [addr16],A			Operand := A, 16-bit address of 24-bit pointer
+:LDF [Addr16DW], A		is Pre92 & op0_8=0xBD ; Addr16DW & A {
+	local addr:$(RAM_W) = Addr16DW:$(RAM_W);
+	*:1 addr = A;	# why load not working??
+	flagNZ(A);
+}
+# -/90	1010 1111  addr24	LDF A,(addr24,X/Y)		Load far (=LDW #imm8,X)
+:LDF A, (Addr24, X_Y)		is op0_8=0xAF ; Addr24 & A & X_Y {
+	local addr:$(RAM_W) = &Addr24 + zext(X_Y);
+	load (A, *:1 addr);
+}
+# 92/91	1010 1111  addr16	LDF A,([addr16],X/Y)	16-bit address of 24-bit pointer
+:LDF A, ([Addr16DW], X_Y_92)	is X_Y_92 ; op0_8=0xAF ; Addr16DW & A {
+	local addr:$(RAM_W) = Addr16DW:$(RAM_W) + zext(X_Y_92);
+	load (A, *:1 addr);
+}
+
+
+# two-operand instructions addressing modes (8-bit operations)
+
+# -		0001 opcode	addr8	OP (addr8,SP)		Stack-relative operand (see above; opcodes 16, 17, 1C, 1D do not follow pattern)
+TwoOp:	StackAddr8	is Pre00 & op4_4=0x1 ; StackAddr8		{ export StackAddr8; }
+# -		1010 opcode	imm8	OP #imm8			8-bit immediate operand (forbidden as destination)
+TwoOp:	Imm8u		is Pre00 & op4_4=0xA ; Imm8u			{ export Imm8u; }
+# -		1011 opcode	addr8	OP addr8			8-bit absolute address (forbidden for jump/call)
+TwoOp:	Addr8B		is Pre00 & op4_4=0xB ; Addr8B			{ export Addr8B; }
+# -		1100 opcode	addr16	OP addr16			16-bit absolute address
+TwoOp:	Addr16B		is Pre00 & op4_4=0xC ; Addr16B			{ export Addr16B; }
+# 72	1100 opcode	addr16	OP [addr16]			16-bit indirect address
+TwoOp:	[Addr16W]	is Pre72 & op4_4=0xC ; Addr16W			{ local ptr:$(RAM_W) = zext(Addr16W); export *:1 ptr; }
+# 92	1100 opcode	addr8	OP [addr8]			8-bit indirect address of 16-bit address
+TwoOp:	[Addr8W]	is Pre92 & op4_4=0xC ; Addr8W 			{ local ptr:$(RAM_W) = zext(Addr8W); export *:1 ptr; }
+# -/90	1101 opcode	addr16	OP (addr16,X/Y)		Indexed with 16-bit offset
+TwoOp:	(Addr16B, X_Y)	is op4_4=0xD & X_Y; Addr16B			{ local addr:$(RAM_W) = zext(X_Y) + &Addr16B; export *:1 addr; }
+# 72	1101 opcode	addr16	OP ([addr16],X)		16-bit indirect + X
+TwoOp:	([Addr16W], X) is Pre72 & op4_4=0xD & X; Addr16W	{ local addr:$(RAM_W) = zext(X) + zext(Addr16W); export *:1 addr;  }
+# 92/91	1101 opcode	addr16	OP ([addr8],X/Y)	8-bit indirect + X/Y
+TwoOp:	([Addr8W], X_Y_92) is op4_4=0xD & X_Y_92; Addr8W	{ local addr:$(RAM_W) = zext(X_Y_92) + zext(Addr8W); export *:1 addr;  }
+# -/90	1110 opcode	addr8	OP (addr8,X/Y)		Indexed with 8-bit offset
+TwoOp:	(val8u, X_Y) is op4_4=0xE & X_Y ; val8u				{ local addr:$(RAM_W) = zext(X_Y) + val8u; export *:1 addr; }
+# -/90	1111 opcode			OP (X/Y)			Indexed with no offset
+TwoOp:	(X_Y)		is op4_4=0xF & X_Y						{ export *:1 X_Y; }
+
+# prefix	mode 0000	operand		SUB A,operand	A := A - operand
+:SUB A, TwoOp		is op0_4=0x0 ... & TwoOp & A {
+	substract(A, TwoOp);
+}
+# prefix	mode 0001	operand		CP A,operand	Compare A - operand
+:CP A, TwoOp		is op0_4=0x1 ... & TwoOp & A {
+	compare(A, TwoOp);
+}
+# prefix	mode 0010	operand		SBC A,operand	A := A - operand - C subtract with borrow
+:SBC A, TwoOp		is op0_4=0x2 ... & TwoOp & A {
+	substractCarry(A, TwoOp);
+}
+# prefix	mode 0100	operand		AND A,operand	A := A & operand, bitwise and
+:AND A, TwoOp		is op0_4=0x4 ... & TwoOp & A {
+	A = A & TwoOp;
+	flagNZ(A);
+}
+# prefix	mode 0101	operand		BCP A,operand	Bitwise test A & operand
+:BCP A, TwoOp		is op0_4=0x5 ... & TwoOp & A {
+	local x = A & TwoOp;
+	flagNZ(x);
+}
+# prefix	mode 0110	operand		LD A,operand	A := operand (mode 2 LD #imm8,A reassigned, see below)
+:LD A, TwoOp		is op0_4=0x6 ... & TwoOp & A {
+	load(A, TwoOp);
+}
+# prefix	mode 0111	operand		LD operand,A	Operand := A
+:LD TwoOp, A		is op0_4=0x7 ... & TwoOp & A {
+	load(TwoOp, A);
+}
+# prefix	mode 1000	operand		XOR A,operand	A := A ^ operand, exclusive-or
+:XOR A, TwoOp		is op0_4=0x8 ... & TwoOp & A {
+	A = A ^ TwoOp;
+	flagNZ(A);
+}
+# prefix	mode 1001	operand		ADC A,operand	A := A + operand + C, add with carry
+:ADC A, TwoOp		is op0_4=0x9 ... & TwoOp & A {
+	addCarry(A, TwoOp);
+}
+# prefix	mode 1010	operand		OR A,operand	A := A | operand, inclusive or
+:OR A, TwoOp		is op0_4=0xA ... & TwoOp & A {
+	A = A | TwoOp;
+	flagNZ(A);
+}
+# prefix	mode 1011	operand		ADD A,operand	A := A + operand
+:ADD A, TwoOp		is op0_4=0xB ... & TwoOp & A {
+	addb(A, TwoOp);
+}
+# prefix	mode 1100	operand		JP operand		Low 16 bits of PC := operand, unconditional jump (modes 2 JP #imm8 and 3 JP addr8 reassigned, see below)
+:JP TwoOp			is op0_4=0xC ... & TwoOp {
+	goto TwoOp;
+}
+# prefix	mode 1101	operand		CALL operand	Push 16-bit PC, low 16 bits of PC := operand (modes 2 CALL #imm8 and 3 CALL addr8 reassigned, see below)
+:CALL TwoOp		is op0_4=0xD ... & TwoOp {
+	local pc:2 = inst_next;
+	pushw(pc);
+	call TwoOp;
+}
+
+# two-operand instructions addressing modes (16-bit operations)
+# CPW/LDW is a special case: prefix modifies both operands
+
+# -		0001 opcode	addr8	OP (addr8,SP)		Stack-relative operand
+TwoOpW:	StackAddr8W		is Pre00 & op4_4=0x1 ; StackAddr8W	{ export StackAddr8W; }
+TwoOpW:	StackAddr8W		is Pre90 & op4_4=0x1 ; StackAddr8W	{ export StackAddr8W; }
+# -		1010 opcode	imm8	OP #imm8			8-bit immediate operand (forbidden as destination)
+TwoOpW:	Imm16u			is Pre00 & op4_4=0xA ; Imm16u		{ export Imm16u; }
+TwoOpW:	Imm16u			is Pre90 & op4_4=0xA ; Imm16u		{ export Imm16u; }
+# -		1011 opcode	addr8	OP addr8			8-bit absolute address (forbidden for jump/call)
+TwoOpW:	Addr8W			is Pre00 & op4_4=0xB ; Addr8W		{ export Addr8W; }
+TwoOpW:	Addr8W			is Pre90 & op4_4=0xB ; Addr8W		{ export Addr8W; }
+# -		1100 opcode	addr16	OP addr16			16-bit absolute address
+TwoOpW:	Addr16W			is Pre00 & op4_4=0xC ; Addr16W		{ export Addr16W; }
+TwoOpW:	Addr16W			is Pre90 & op4_4=0xC ; Addr16W		{ export Addr16W; }
+# 72	1100 opcode	addr16	OP [addr16]			16-bit indirect address
+TwoOpW:	[Addr16W]		is Pre72 & op4_4=0xC ; Addr16W		{ local ptr:$(RAM_W) = zext(Addr16W); export *:2 ptr; }
+# 92	1100 opcode	addr8	OP [addr8]			8-bit indirect address of 16-bit address
+TwoOpW:	[Addr8W]		is Pre92 & op4_4=0xC ; Addr8W 		{ local ptr:$(RAM_W) = zext(Addr8W); export *:2 ptr; }
+TwoOpW:	[Addr8W]		is Pre91 & op4_4=0xC ; Addr8W 		{ local ptr:$(RAM_W) = zext(Addr8W); export *:2 ptr; }
+# -/90	1101 opcode	addr16	OP (addr16,X/Y)		Indexed with 16-bit offset
+TwoOpW: (Addr16W, X_Y)	is op4_4=0xD & X_Y; Addr16W			{ local addr:$(RAM_W) = zext(X_Y) + &Addr16W; export *:2 addr; }
+# 72	1101 opcode	addr16	OP ([addr16],X)		16-bit indirect + X
+TwoOpW: ([Addr16W], X)	is Pre72 & op4_4=0xD & X; Addr16W	{ local addr:$(RAM_W) = zext(X) + zext(Addr16W); export *:2 addr;  }
+# 92/91	1101 opcode	addr16	OP ([addr8],X/Y)	8-bit indirect + X/Y
+TwoOpW: ([Addr8W], X_Y_92) is op4_4=0xD & X_Y_92; Addr8W	{ local addr:$(RAM_W) = zext(X_Y_92) + zext(Addr8W); export *:2 addr;  }
+# -/90	1110 opcode	addr8	OP (addr8,X/Y)		Indexed with 8-bit offset
+TwoOpW: (val8u, X_Y)	is op4_4=0xE & X_Y ; val8u			{ local addr:$(RAM_W) = zext(X_Y) + val8u; export *:2 addr; }
+# -/90	1111 opcode			OP (X/Y)			Indexed with no offset
+TwoOpW: (X_Y)			is op4_4=0xF & X_Y					{ export *:2 X_Y; }
+
+
+X_Y_LDW:	X			is (ctx_prefix=0x00 | ctx_prefix=0x92 | ctx_prefix=0x72) & X	{ export X; }
+X_Y_LDW:	Y			is (ctx_prefix=0x90 | ctx_prefix=0x91)					 & Y	{ export Y; }
+
+Y_X_LDW:	Y			is (ctx_prefix=0x00 | ctx_prefix=0x92 | ctx_prefix=0x72) & Y	{ export Y; }
+Y_X_LDW:	X			is (ctx_prefix=0x90 | ctx_prefix=0x91)					 & X	{ export X; }
+
+
+# prefix	mode 0011	operand		CPW X/Y,operand	Compare X/Y - operand (16 bit); compare Y/X if operand mode is indexed by X/Y (opcodes D3, E3, F3)
+:CPW X_Y_LDW, TwoOpW		is (op0_8=0x13 | op0_8=0xA3 | op0_8=0xB3 | op0_8=0xC3)... & TwoOpW & X_Y_LDW { compare(X_Y_LDW, TwoOpW); }
+:CPW Y_X_LDW, TwoOpW		is (op0_8=0xD3 | op0_8=0xE3 | op0_8=0xF3)...              & TwoOpW & Y_X_LDW { compare(Y_X_LDW, TwoOpW); }
+
+# -/90		mode 1110	operand		LDW X/Y,operand	Load X/Y := operand; use 16 instead of 90 1E for LDW Y,(addr8,SP)
+:LDW X_Y_LDW, TwoOpW		is op0_4=0xE... & TwoOpW & X_Y_LDW	{ load(X_Y_LDW, TwoOpW); }
+# FIXME strange bug: should be included in previous table
+:LDW X_Y_LDW, TwoOpW		is op0_8=0x1E... & TwoOpW & X_Y_LDW	{ load(X_Y_LDW, TwoOpW); }
+
+## prefix	mode 1111	operand		LDW operand,X/Y	Operand := X/Y (16-bit, mode 2 LD #imm8,X reassigned, see below); use 17 instead of 90 1F for LDW (addr8,SP),Y
+:LDW TwoOpW, X_Y_LDW		is (op0_8=0x1F | op0_8=0xBF | op0_8=0xCF)... & TwoOpW & X_Y_LDW { load(TwoOpW, X_Y_LDW); }
+:LDW TwoOpW, Y_X_LDW		is (op0_8=0xDF | op0_8=0xEF | op0_8=0xFF)... & TwoOpW & Y_X_LDW { load(TwoOpW, Y_X_LDW); }
+
+
+
