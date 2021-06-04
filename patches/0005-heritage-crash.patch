@@ -1,5 +1,5 @@
---- src/decompiler/heritage.cc	2021-06-03 19:24:14.000000000 +0200
-+++ src/decompiler/heritage.cc	2021-06-04 10:57:56.000000000 +0200
+--- a/src/decompiler/heritage.cc	2021-06-03 19:24:14.000000000 +0200
++++ b/src/decompiler/heritage.cc	2021-06-04 10:57:56.000000000 +0200
 @@ -1610,9 +1610,10 @@
    // Alter the disjoint cover (both locally and globally) to reflect our refinement
    LocationMap::iterator iter = disjoint.find(addr);
