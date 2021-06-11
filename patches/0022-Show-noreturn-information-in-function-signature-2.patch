@@ -1,18 +1,5 @@
-From 4f44da768da3b2fa23b87c51a99a07eeb8252ea4 Mon Sep 17 00:00:00 2001
-From: Yuuoniy <linmq006@gmail.com>
-Date: Tue, 23 Mar 2021 17:35:37 +0800
-Subject: [PATCH 22/23] Show noreturn information in function signature (#2)
-
----
- .../src/decompile/cpp/prettyprint.cc          | 20 +++++++++++++++++++
- .../src/decompile/cpp/prettyprint.hh          |  9 +++++++++
- .../Decompiler/src/decompile/cpp/printc.cc    |  4 +++-
- 3 files changed, 32 insertions(+), 1 deletion(-)
-
-diff --git a/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.cc b/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.cc
-index 4b687b53f..88e976626 100644
---- a/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.cc
-+++ b/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.cc
+--- a/src/decompiler/prettyprint.cc
++++ b/src/decompiler/prettyprint.cc
 @@ -206,6 +206,14 @@ void EmitXml::tagFuncName(const char *ptr,syntax_highlight hl,
    *s << "</funcname>";
  }
@@ -54,10 +41,8 @@ index 4b687b53f..88e976626 100644
  void EmitPrettyPrint::tagType(const char *ptr,syntax_highlight hl,const Datatype *ct)
  
  {
-diff --git a/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.hh b/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.hh
-index 053ec38d0..ddd16626d 100644
---- a/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.hh
-+++ b/Ghidra/Features/Decompiler/src/decompile/cpp/prettyprint.hh
+--- a/src/decompiler/prettyprint.hh
++++ b/src/decompiler/prettyprint.hh
 @@ -117,6 +117,7 @@ public:
  			    const Varnode *vn,const PcodeOp *op);
    virtual void tagOp(const char *ptr,syntax_highlight hl,const PcodeOp *op);
@@ -102,10 +87,8 @@ index 053ec38d0..ddd16626d 100644
    virtual void tagType(const char *ptr,syntax_highlight hl,const Datatype *ct);
    virtual void tagField(const char *ptr,syntax_highlight hl,const Datatype *ct,int4 off);
    virtual void tagComment(const char *ptr,syntax_highlight hl,
-diff --git a/Ghidra/Features/Decompiler/src/decompile/cpp/printc.cc b/Ghidra/Features/Decompiler/src/decompile/cpp/printc.cc
-index 07461326a..4c062cfee 100644
---- a/Ghidra/Features/Decompiler/src/decompile/cpp/printc.cc
-+++ b/Ghidra/Features/Decompiler/src/decompile/cpp/printc.cc
+--- a/src/decompiler/printc.cc
++++ b/src/decompiler/printc.cc
 @@ -2304,7 +2304,9 @@ void PrintC::emitFunctionDeclaration(const Funcdata *fd)
    emitSymbolScope(fd->getSymbol());
    emit->tagFuncName(fd->getName().c_str(),EmitXml::funcname_color,
@@ -117,6 +100,3 @@ index 07461326a..4c062cfee 100644
    emit->spaces(function_call.spacing,function_call.bump);
    int4 id2 = emit->openParen('(');
    emit->spaces(0,function_call.bump);
--- 
-2.24.3 (Apple Git-128)
-
