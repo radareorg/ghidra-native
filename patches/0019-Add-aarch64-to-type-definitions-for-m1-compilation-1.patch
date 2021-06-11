@@ -9,8 +9,8 @@ Subject: [PATCH 19/23] Add aarch64 to type definitions for m1 compilation (#1)
 
 diff --git a/Ghidra/Features/Decompiler/src/decompile/cpp/types.h b/Ghidra/Features/Decompiler/src/decompile/cpp/types.h
 index 6d5b6acb2..69779f711 100644
---- a/Ghidra/Features/Decompiler/src/decompile/cpp/types.h
-+++ b/Ghidra/Features/Decompiler/src/decompile/cpp/types.h
+--- a/src/decompiler/types.h
++++ b/src/decompiler/types.h
 @@ -174,7 +174,7 @@ typedef char int1;
  typedef uint4 uintp;
  #endif
