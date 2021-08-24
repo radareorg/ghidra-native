@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+#  build-windows:
+#    runs-on: windows-latest
+#    steps:
+#    - uses: actions/checkout@v2
+#    - name: Windows Dependencies
+#      run: pip install meson ninja
+#    - name: Building Sdb
+#      run: meson build && ninja -C build
+#    - name: Pub
+#      uses: actions/upload-artifact@v2
+#      with:
+#        path: build/*.exe
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Patching
+      run: make patch
+#    - name: Pub
+#      uses: actions/upload-artifact@v2
+#      with:
+#        path: r0
+  build-macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Patching
+      run: make patch
