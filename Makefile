@@ -8,6 +8,7 @@ patch:
 sync-decompiler decompiler-sync: ghidra
 	rm -rf src/decompiler
 	cp -rf ghidra/Ghidra/Features/Decompiler/src/decompile/cpp src/decompiler
+	rm -rf src/Processor/*/src
 
 sync-processors processors-sync: ghidra
 	rm -rf src/Processors
