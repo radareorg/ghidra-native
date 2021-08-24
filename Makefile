@@ -1,6 +1,6 @@
 all:
 	
-sync: sync-processors sync-decompiler
+update sync: sync-processors sync-decompiler
 
 patch:
 	for a in $(shell ls patches/*.patch | sort -n) ; do patch -p1 < $$a ; done
@@ -15,6 +15,7 @@ sync-processors processors-sync: ghidra
 	$(MAKE) sync-stm8
 
 sync-stm8:
+	rm -rf ghidra_STM8
 	git clone https://github.com/esaulenka/ghidra_STM8
 	mkdir -p src/Processors/STM8
 	cp -rf ghidra_STM8/* src/Processors/STM8
