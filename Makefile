@@ -2,13 +2,26 @@ all:
 	
 update sync: sync-processors sync-decompiler
 
-patch:
+patch: patch.done
+
+patch.done:
 	for a in $(shell ls patches/*.patch | sort -n) ; do patch -p1 < $$a ; done
+	touch patch.done
 
 sync-decompiler decompiler-sync: ghidra
 	rm -rf src/decompiler
 	cp -rf ghidra/Ghidra/Features/Decompiler/src/decompile/cpp src/decompiler
 	rm -rf src/Processor/*/src
+
+V=$(shell cat VERSION)
+D=ghidra-native-$(V)
+
+dist:
+	git clone . $(D)
+	make -C $(D) patch
+	rm -rf $(D)/.git
+	zip -r $(D).zip $(D)
+	rm -rf $(D)
 
 sync-processors processors-sync: ghidra
 	rm -rf src/Processors
