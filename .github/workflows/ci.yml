@@ -1,3 +1,4 @@
+---
 name: ci
 
 on:
@@ -10,13 +11,25 @@ jobs:
   dist-zip:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Distribution Zip
-      run: make dist
-    - name: Pub
-      uses: actions/upload-artifact@v2
-      with:
-        path: *.zip
+      - uses: actions/checkout@v2
+      - name: Distribution Zip
+        run: make dist
+      - name: Pub
+        uses: actions/upload-artifact@v2
+        with:
+          path: ghidra-native-*.zip
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Patching
+        run: make patch
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Patching
+        run: make patch
 #  build-windows:
 #    runs-on: windows-latest
 #    steps:
@@ -29,19 +42,3 @@ jobs:
 #      uses: actions/upload-artifact@v2
 #      with:
 #        path: build/*.exe
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: Patching
-      run: make patch
-#    - name: Pub
-#      uses: actions/upload-artifact@v2
-#      with:
-#        path: r0
-  build-macos:
-    runs-on: macos-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: Patching
-      run: make patch
