@@ -1,3 +1,5 @@
+diff --git a/src/decompiler/context.hh b/src/decompiler/context.hh
+index 3372e5a..5d2e108 100644
 --- a/src/decompiler/context.hh
 +++ b/src/decompiler/context.hh
 @@ -89,6 +89,8 @@ private:
@@ -9,8 +11,8 @@
  public:
    ParserContext(ContextCache *ccache);
    ~ParserContext(void) { if (context != (uintm *)0) delete [] context; }
-diff --git a/Ghidra/Features/Decompiler/src/decompile/cpp/sleigh.hh b/Ghidra/Features/Decompiler/src/decompile/cpp/sleigh.hh
-index 1a758a488..1e96c2c30 100644
+diff --git a/src/decompiler/sleigh.hh b/src/decompiler/sleigh.hh
+index 1a758a4..1e96c2c 100644
 --- a/src/decompiler/sleigh.hh
 +++ b/src/decompiler/sleigh.hh
 @@ -166,6 +166,7 @@ protected:
@@ -21,6 +23,3 @@ index 1a758a488..1e96c2c30 100644
  public:
    Sleigh(LoadImage *ld,ContextDatabase *c_db);		///< Constructor
    virtual ~Sleigh(void);				///< Destructor
--- 
-2.24.3 (Apple Git-128)
-

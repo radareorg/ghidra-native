@@ -8,6 +8,13 @@ patch.done:
 	for a in $(shell ls patches/*.patch | sort -n) ; do patch -p1 < $$a ; done
 	touch patch.done
 
+massage:
+	mkdir -p /tmp/patches
+	git reset --hard
+	for a in $(shell ls patches/*.patch | sort -n) ; do patch -p1 < $$a ; git diff > /tmp/$$a ; git reset --hard ; done
+	mv /tmp/patches/* patches
+	
+
 sync-decompiler decompiler-sync: ghidra
 	rm -rf src/decompiler
 	cp -rf ghidra/Ghidra/Features/Decompiler/src/decompile/cpp src/decompiler

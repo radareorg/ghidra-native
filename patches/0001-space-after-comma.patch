@@ -1,3 +1,5 @@
+diff --git a/src/decompiler/printc.cc b/src/decompiler/printc.cc
+index cc002a2..44de2eb 100644
 --- a/src/decompiler/printc.cc
 +++ b/src/decompiler/printc.cc
 @@ -52,7 +52,7 @@ OpToken PrintC::boolean_and = { "&&", 2, 22, false, OpToken::binary, 1, 0, (OpTo
@@ -9,7 +11,7 @@
  OpToken PrintC::new_op = { "", 2, 62, false, OpToken::space, 1, 0, (OpToken *)0 };
  
  // Inplace assignment operators
-@@ -1837,7 +1837,7 @@ void PrintC::emitStructDefinition(const TypeStruct *ct)
+@@ -1861,7 +1861,7 @@ void PrintC::emitStructDefinition(const TypeStruct *ct)
      pushTypeEnd((*iter).type);
      iter++;
      if (iter != ct->endField()) {
@@ -18,7 +20,7 @@
        emit->tagLine();
      }
    }
-@@ -1936,7 +1936,7 @@ void PrintC::emitPrototypeInputs(const FuncProto *proto)
+@@ -1960,7 +1960,7 @@ void PrintC::emitPrototypeInputs(const FuncProto *proto)
      bool printComma = false;
      for(int4 i=0;i<sz;++i) {
        if (printComma)
@@ -27,7 +29,7 @@
        ProtoParameter *param = proto->getParam(i);
        if (isSet(hide_thisparam) && param->isThisPointer())
  	continue;
-@@ -1955,7 +1955,7 @@ void PrintC::emitPrototypeInputs(const FuncProto *proto)
+@@ -1979,7 +1979,7 @@ void PrintC::emitPrototypeInputs(const FuncProto *proto)
    }
    if (proto->isDotdotdot()) {
      if (sz != 0)
@@ -36,7 +38,7 @@
      emit->print("...");
    }
  }
-@@ -2408,7 +2408,7 @@ void PrintC::emitBlockBasic(const BlockBasic *bb)
+@@ -2432,7 +2432,7 @@ void PrintC::emitBlockBasic(const BlockBasic *bb)
  	continue;
        if (separator) {
  	if (isSet(comma_separate)) {

@@ -1,6 +1,8 @@
+diff --git a/src/decompiler/sleigh_arch.hh b/src/decompiler/sleigh_arch.hh
+index 84b55fd..c9c8ffb 100644
 --- a/src/decompiler/sleigh_arch.hh
 +++ b/src/decompiler/sleigh_arch.hh
-@@ -98,7 +98,6 @@ class SleighArchitecture : public Architecture {
+@@ -97,7 +97,6 @@ class SleighArchitecture : public Architecture {
  protected:
    ostream *errorstream;					///< Error stream associated with \b this SleighArchitecture
    // buildLoader must be filled in by derived class
@@ -8,7 +10,7 @@
    virtual Translate *buildTranslator(DocumentStorage &store);
    virtual PcodeInjectLibrary *buildPcodeInjectLibrary(void);
    virtual void buildSpecFile(DocumentStorage &store);
-@@ -113,7 +112,9 @@ public:
+@@ -112,7 +111,9 @@ public:
    virtual void printMessage(const string &message) const { *errorstream << message << endl; }
    virtual ~SleighArchitecture(void);
    virtual string getDescription(void) const;

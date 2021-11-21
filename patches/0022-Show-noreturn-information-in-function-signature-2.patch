@@ -1,6 +1,8 @@
+diff --git a/src/decompiler/prettyprint.cc b/src/decompiler/prettyprint.cc
+index 49b30e4..ea37f79 100644
 --- a/src/decompiler/prettyprint.cc
 +++ b/src/decompiler/prettyprint.cc
-@@ -206,6 +206,14 @@ void EmitXml::tagFuncName(const char *ptr,syntax_highlight hl,
+@@ -208,6 +208,14 @@ void EmitXml::tagFuncName(const char *ptr,syntax_highlight hl,
    *s << "</funcname>";
  }
  
@@ -15,7 +17,7 @@
  /// \brief Emit a data-type identifier
  ///
  /// A string representing the name of a data-type, as appropriate for the source language
-@@ -411,6 +419,9 @@ void TokenSplit::print(EmitXml *emit) const
+@@ -415,6 +423,9 @@ void TokenSplit::print(EmitXml *emit) const
    case fnam_t:	// tagFuncName
      emit->tagFuncName(tok.c_str(),hl,ptr_second.fd,op);
      break;
@@ -25,7 +27,7 @@
    case type_t:	// tagType
      emit->tagType(tok.c_str(),hl,ptr_second.ct);
      break;
-@@ -1039,6 +1050,15 @@ void EmitPrettyPrint::tagFuncName(const char *ptr,syntax_highlight hl,const Func
+@@ -1045,6 +1056,15 @@ void EmitPrettyPrint::tagFuncName(const char *ptr,syntax_highlight hl,const Func
    scan();
  }
  
@@ -41,9 +43,11 @@
  void EmitPrettyPrint::tagType(const char *ptr,syntax_highlight hl,const Datatype *ct)
  
  {
+diff --git a/src/decompiler/prettyprint.hh b/src/decompiler/prettyprint.hh
+index 5874631..b05eadf 100644
 --- a/src/decompiler/prettyprint.hh
 +++ b/src/decompiler/prettyprint.hh
-@@ -117,6 +117,7 @@ public:
+@@ -120,6 +120,7 @@ public:
  			    const Varnode *vn,const PcodeOp *op);
    virtual void tagOp(const char *ptr,syntax_highlight hl,const PcodeOp *op);
    virtual void tagFuncName(const char *ptr,syntax_highlight hl,const Funcdata *fd,const PcodeOp *op);
@@ -51,7 +55,7 @@
    virtual void tagType(const char *ptr,syntax_highlight hl,const Datatype *ct);
    virtual void tagField(const char *ptr,syntax_highlight hl,const Datatype *ct,int4 off);
    virtual void tagComment(const char *ptr,syntax_highlight hl,const AddrSpace *spc,uintb off);
-@@ -247,6 +248,8 @@ public:
+@@ -268,6 +269,8 @@ public:
      *s << ptr; }
    virtual void tagFuncName(const char *ptr,syntax_highlight hl,const Funcdata *fd,const PcodeOp *op) {
      *s << ptr; }
@@ -60,7 +64,7 @@
    virtual void tagType(const char *ptr,syntax_highlight hl,const Datatype *ct) {
      *s << ptr; }
    virtual void tagField(const char *ptr,syntax_highlight hl,const Datatype *ct,int4 off) {
-@@ -313,6 +316,7 @@ public:
+@@ -334,6 +337,7 @@ public:
      vari_t,		///< A variable identifier
      op_t,		///< An operator
      fnam_t,		///< A function identifier
@@ -68,7 +72,7 @@
      type_t,		///< A data-type identifier
      field_t,		///< A field name for a structured data-type
      comm_t,		///< Part of a comment block
-@@ -468,6 +472,10 @@ public:
+@@ -489,6 +493,10 @@ public:
      tok = ptr; size = tok.size();
      tagtype=fnam_t; delimtype=tokenstring; hl=h; ptr_second.fd=f; op=o; }
  
@@ -79,7 +83,7 @@
    /// \brief Create a data-type identifier token
    ///
    /// \param ptr is the character data for the identifier
-@@ -751,6 +759,7 @@ public:
+@@ -772,6 +780,7 @@ public:
  			   const Varnode *vn,const PcodeOp *op);
    virtual void tagOp(const char *ptr,syntax_highlight hl,const PcodeOp *op);
    virtual void tagFuncName(const char *ptr,syntax_highlight hl,const Funcdata *fd,const PcodeOp *op);
@@ -87,9 +91,11 @@
    virtual void tagType(const char *ptr,syntax_highlight hl,const Datatype *ct);
    virtual void tagField(const char *ptr,syntax_highlight hl,const Datatype *ct,int4 off);
    virtual void tagComment(const char *ptr,syntax_highlight hl,
+diff --git a/src/decompiler/printc.cc b/src/decompiler/printc.cc
+index cc002a2..3b096c1 100644
 --- a/src/decompiler/printc.cc
 +++ b/src/decompiler/printc.cc
-@@ -2304,7 +2304,9 @@ void PrintC::emitFunctionDeclaration(const Funcdata *fd)
+@@ -2312,7 +2312,9 @@ void PrintC::emitFunctionDeclaration(const Funcdata *fd)
    emitSymbolScope(fd->getSymbol());
    emit->tagFuncName(fd->getName().c_str(),EmitXml::funcname_color,
  		    fd,(PcodeOp *)0);

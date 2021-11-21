@@ -1,6 +1,8 @@
---- a/src/decompiler/heritage.cc	2021-06-03 19:24:14.000000000 +0200
-+++ b/src/decompiler/heritage.cc	2021-06-04 10:57:56.000000000 +0200
-@@ -1610,9 +1610,10 @@
+diff --git a/src/decompiler/heritage.cc b/src/decompiler/heritage.cc
+index 7f8bb2b..5701d29 100644
+--- a/src/decompiler/heritage.cc
++++ b/src/decompiler/heritage.cc
+@@ -1610,9 +1610,10 @@ bool Heritage::refinement(const Address &addr,int4 size,const vector<Varnode *>
    // Alter the disjoint cover (both locally and globally) to reflect our refinement
    LocationMap::iterator iter = disjoint.find(addr);
    int4 pass = (*iter).second.pass;

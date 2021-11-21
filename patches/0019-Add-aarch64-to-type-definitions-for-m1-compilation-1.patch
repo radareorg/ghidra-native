@@ -1,17 +1,8 @@
-From 45a7fbe68714cfef0f8a099764b7ac36897f2166 Mon Sep 17 00:00:00 2001
-From: Luca Naef <luca.s.naef@gmail.com>
-Date: Wed, 30 Dec 2020 12:40:30 +0100
-Subject: [PATCH 19/23] Add aarch64 to type definitions for m1 compilation (#1)
-
----
- Ghidra/Features/Decompiler/src/decompile/cpp/types.h | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/Ghidra/Features/Decompiler/src/decompile/cpp/types.h b/Ghidra/Features/Decompiler/src/decompile/cpp/types.h
-index 6d5b6acb2..69779f711 100644
+diff --git a/src/decompiler/types.h b/src/decompiler/types.h
+index d109066..1df425a 100644
 --- a/src/decompiler/types.h
 +++ b/src/decompiler/types.h
-@@ -174,7 +174,7 @@ typedef char int1;
+@@ -166,7 +166,7 @@ typedef char int1;
  typedef uint4 uintp;
  #endif
  
@@ -20,6 +11,3 @@ index 6d5b6acb2..69779f711 100644
  #define HOST_ENDIAN 0
  typedef unsigned int uintm;
  typedef int intm;
--- 
-2.24.3 (Apple Git-128)
-

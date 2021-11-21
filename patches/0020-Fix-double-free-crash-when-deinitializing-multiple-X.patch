@@ -1,5 +1,5 @@
 diff --git a/src/decompiler/xml.cc b/src/decompiler/xml.cc
-index 51fb5870c..3a064d4b3 100644
+index 51fb587..3a064d4 100644
 --- a/src/decompiler/xml.cc
 +++ b/src/decompiler/xml.cc
 @@ -98,8 +98,6 @@
@@ -12,7 +12,7 @@ index 51fb5870c..3a064d4b3 100644
  ///
  /// Tokenize a byte stream suitably for the main XML parser.  The scanner expects an ASCII or UTF-8
 diff --git a/src/decompiler/xml.hh b/src/decompiler/xml.hh
-index 75e7dd9a9..93f6278d1 100644
+index 75e7dd9..93f6278 100644
 --- a/src/decompiler/xml.hh
 +++ b/src/decompiler/xml.hh
 @@ -27,6 +27,7 @@
