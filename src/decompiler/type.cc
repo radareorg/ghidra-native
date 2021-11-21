@@ -130,9 +130,8 @@ Datatype *Datatype::nearestArrayedComponentBackward(uintb off,uintb *newoff,int4
   return (TypeArray *)0;
 }
 
-// Compare \b this with another data-type.
-/// 0 (equality) means the data-types are functionally equivalent (even if names differ)
-/// Smaller types come earlier. More specific types come earlier.
+/// Order \b this with another data-type, in a way suitable for the type propagation algorithm.
+/// Bigger types come earlier. More specific types come earlier.
 /// \param op is the data-type to compare with \b this
 /// \param level is maximum level to descend when recursively comparing
 /// \return negative, 0, positive depending on ordering of types
@@ -142,9 +141,11 @@ int4 Datatype::compare(const Datatype &op,int4 level) const
   return compareDependency(op);
 }
 
-/// Ordering of data-types for the main TypeFactory container.
-/// Comparison only goes down one-level in the component structure,
-/// before just comparing pointers.
+/// Sort data-types for the main TypeFactory container.  The sort needs to be based on
+/// the data-type structure so that an example data-type, constructed outside the factory,
+/// can be used to find the equivalent object inside the factory.  This means the
+/// comparison should not examine the data-type id. In practice, the comparison only needs
+/// to go down one level in the component structure before just comparing component pointers.
 /// \param op is the data-type to compare with \b this
 /// \return negative, 0, positive depending on ordering of types
 int4 Datatype::compareDependency(const Datatype &op) const
@@ -309,7 +310,14 @@ void Datatype::saveXmlRef(ostream &s) const
   if ((id!=0)&&(metatype != TYPE_VOID)) {
     s << "<typeref";
     a_v(s,"name",name);
-    s << " id=\"0x" << hex << id << '\"';
+    if (isVariableLength()) {			// For a type with a "variable length" base
+      uintb origId = hashSize(id, size);	// Emit the size independent version of the id
+      s << " id=\"0x" << hex << origId << '\"';
+      s << " size=\"" << dec << size << '\"';	// but also emit size of this instance
+    }
+    else {
+      s << " id=\"0x" << hex << id << '\"';
+    }
     s << "/>";
   }
   else
@@ -547,6 +555,45 @@ void TypePointer::restoreXml(const Element *el,TypeFactory &typegrp)
   ptrto = typegrp.restoreXmlType( *el->getChildren().begin() );
   if (name.size() == 0)		// Inherit only coretype only if no name
     flags = ptrto->getInheritable();
+}
+
+/// \brief Find a sub-type pointer given an offset into \b this
+///
+/// Add a constant offset to \b this pointer.
+/// If there is a valid component at that offset, return a pointer
+/// to the data-type of the component or NULL otherwise.
+/// This routine only goes down one level at most. Pass back the
+/// renormalized offset relative to the new data-type
+/// \param off is a reference to the offset to add
+/// \param allowArrayWrap is \b true if the pointer should be treated as a pointer to an array
+/// \return a pointer datatype for the component or NULL
+TypePointer *TypePointer::downChain(uintb &off,bool allowArrayWrap,TypeFactory &typegrp)
+
+{
+  int4 ptrtoSize = ptrto->getSize();
+  if (off >= ptrtoSize) {	// Check if we are wrapping
+    if (ptrtoSize != 0 && !ptrto->isVariableLength()) {	// Check if pointed-to is wrappable
+      if (!allowArrayWrap)
+        return (TypePointer *)0;
+      intb signOff = (intb)off;
+      sign_extend(signOff,size*8-1);
+      signOff = signOff % ptrtoSize;
+      if (signOff < 0)
+	signOff = signOff + ptrtoSize;
+      off = signOff;
+      if (off == 0)		// If we've wrapped and are now at zero
+        return this;		// consider this going down one level
+    }
+  }
+
+  // If we know we have exactly one of an array, strip the array to get pointer to element
+  bool doStrip = (ptrto->getMetatype() != TYPE_ARRAY);
+  Datatype *pt = ptrto->getSubType(off,&off);
+  if (pt == (Datatype *)0)
+    return (TypePointer *)0;
+  if (doStrip)
+    return typegrp.getTypePointerStripArray(size, pt, wordsize);
+  return typegrp.getTypePointer(size,pt,wordsize);
 }
 
 void TypeArray::printRaw(ostream &s) const
@@ -1656,13 +1703,20 @@ Datatype *TypeFactory::findByIdLocal(const string &n,uint8 id) const
   return *iter;
 }
 
-/// Search for a Datatype by \b name and/or \b id. Derived classes may search outside this container.
+/// The id is expected to resolve uniquely.  Internally, different length instances
+/// of a variable length data-type are stored as separate Datatype objects. A non-zero
+/// size can be given to distinguish these cases.
+/// Derived classes may search outside this container.
 /// \param n is the name of the data-type
 /// \param id is the type id of the data-type
+/// \param sz is the given distinguishign size if non-zero
 /// \return the matching Datatype object
-Datatype *TypeFactory::findById(const string &n,uint8 id)
+Datatype *TypeFactory::findById(const string &n,uint8 id,int4 sz)
 
 {
+  if (sz > 0) {				// If the id is for a "variable length" base data-type
+    id = Datatype::hashSize(id, sz);	// Construct the id for the "sized" variant
+  }
   return findByIdLocal(n,id);
 }
 
@@ -1672,7 +1726,7 @@ Datatype *TypeFactory::findById(const string &n,uint8 id)
 Datatype *TypeFactory::findByName(const string &n)
 
 {
-  return findById(n,0);
+  return findById(n,0,0);
 }
 
 /// Find data-type without reference to name, using the functional comparators
@@ -2048,6 +2102,22 @@ TypePointer *TypeFactory::getTypePointer(int4 s,Datatype *pt,uint4 ws)
   return (TypePointer *) findAdd(tmp);
 }
 
+/// The given name is attached, which distinguishes the returned data-type from
+/// other unnamed (or differently named) pointers that otherwise have the same attributes.
+/// \param s is the size of the pointer
+/// \param pt is the pointed-to data-type
+/// \param ws is the wordsize associated with the pointer
+/// \param n is the given name to attach to the pointer
+/// \return the TypePointer object
+TypePointer *TypeFactory::getTypePointer(int4 s,Datatype *pt,uint4 ws,const string &n)
+
+{
+  TypePointer tmp(s,pt,ws);
+  tmp.name = n;
+  tmp.id = Datatype::hashName(n);
+  return (TypePointer *) findAdd(tmp);
+}
+
 // Don't create more than a depth of 2, i.e. ptr->ptr->ptr->...
 /// \param s is the size of the pointer
 /// \param pt is the pointed-to data-type
@@ -2145,31 +2215,6 @@ void TypeFactory::destroyType(Datatype *ct)
   delete ct;
 }
 
-/// Add a constant offset to a pointer with known data-type.
-/// If there is a valid component at that offset, return a pointer
-/// to the data-type of the component or NULL otherwise.
-/// This routine only goes down one level at most. Pass back the
-/// renormalized offset relative to the new data-type
-/// \param ptrtype is the pointer data-type being added to
-/// \param off is a reference to the offset to add
-/// \return a pointer datatype for the component or NULL
-Datatype *TypeFactory::downChain(Datatype *ptrtype,uintb &off)
-
-{				// Change ptr->struct =>  ptr->substruct
-				// where substruct starts at offset off
-  if (ptrtype->metatype != TYPE_PTR) return (Datatype *)0;
-  TypePointer *ptype = (TypePointer *)ptrtype;
-  Datatype *pt = ptype->ptrto;
-  // If we know we have exactly one of an array, strip the array to get pointer to element
-  bool doStrip = (pt->getMetatype() != TYPE_ARRAY);
-  pt = pt->getSubType(off,&off);
-  if (pt == (Datatype *)0)
-    return (Datatype *)0;
-  if (doStrip)
-    return getTypePointerStripArray(ptype->size, pt, ptype->getWordSize());
-  return getTypePointer(ptype->size,pt,ptype->getWordSize());
-}
-
 /// The data-type propagation system can push around data-types that are \e partial or are
 /// otherwise unrepresentable in the source language.  This method substitutes those data-types
 /// with a concrete data-type that is representable, or returns the same data-type if is already concrete.
@@ -2197,18 +2242,25 @@ Datatype *TypeFactory::restoreXmlType(const Element *el)
   Datatype *ct;
   if (el->getName() == "typeref") {
     uint8 newid = 0;
+    int4 size = -1;
     int4 num = el->getNumAttributes();
     for(int4 i=0;i<num;++i) {
-      if (el->getAttributeName(i) == "id") {
+      const string &nm(el->getAttributeName(i));
+      if (nm == "id") {
 	istringstream s(el->getAttributeValue(i));
 	s.unsetf(ios::dec | ios::hex | ios::oct);
 	s >> newid;
+      }
+      else if (nm == "size") {		// A "size" attribute indicates a "variable length" base
+	istringstream s(el->getAttributeValue(i));
+	s.unsetf(ios::dec | ios::hex | ios::oct);
+	s >> size;
       }
     }
     const string &newname( el->getAttributeValue("name"));
     if (newid == 0)		// If there was no id, use the name hash
       newid = Datatype::hashName(newname);
-    ct = findById(newname,newid);
+    ct = findById(newname,newid,size);
     if (ct == (Datatype *)0)
       throw LowlevelError("Unable to resolve type: "+newname);
     return ct;
