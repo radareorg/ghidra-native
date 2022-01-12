@@ -1,0 +1,29 @@
+diff --git a/src/decompiler/types.h b/src/decompiler/types.h
+index d109066..19c8fd4 100644
+--- a/src/decompiler/types.h
++++ b/src/decompiler/types.h
+@@ -25,6 +25,11 @@
+ #ifndef __MYTYPES__
+ #define __MYTYPES__
+ 
++#if (defined (__NetBSD__) || defined (__FreeBSD__) || defined (__OpenBSD__) || defined (__HAIKU__))
++#undef __linux__
++#define __linux__ 1
++#endif
++
+ #if defined( __sparc )
+ #define HOST_ENDIAN 1
+ #if defined( __sparcv9 )
+@@ -14,3 +14,12 @@ index d109066..19c8fd4 100644
+  #if defined( __sparc )
+  #define HOST_ENDIAN 1
+  #if defined( __sparcv9 )
++@@ -261,4 +274,8 @@ CPUI_DEBUG        --    This is the ONE debug switch that should be passed in
++ //# define VARBANK_DEBUG
++ #endif
++
+++#if (defined (__NetBSD__) || defined (__FreeBSD__) || defined (__OpenBSD__) || defined (__HAIKU__))
+++#undef __linux__
+++#endif
+++
++ #endif
