@@ -1,29 +1,54 @@
 diff --git a/src/decompiler/types.h b/src/decompiler/types.h
-index d109066..19c8fd4 100644
+index d109066..8d2df57 100644
 --- a/src/decompiler/types.h
 +++ b/src/decompiler/types.h
-@@ -25,6 +25,11 @@
+@@ -25,6 +25,12 @@
  #ifndef __MYTYPES__
  #define __MYTYPES__
  
-+#if (defined (__NetBSD__) || defined (__FreeBSD__) || defined (__OpenBSD__) || defined (__HAIKU__))
-+#undef __linux__
-+#define __linux__ 1
++#if defined (__linux__) || defined (__NetBSD__) || defined (__FreeBSD__) || defined (__OpenBSD__) || defined (__HAIKU__)
++#define __MODERN_UNIX__ 1
++#else
++#define __MODERN_UNIX__ 0
 +#endif
 +
  #if defined( __sparc )
  #define HOST_ENDIAN 1
  #if defined( __sparcv9 )
-@@ -14,3 +14,12 @@ index d109066..19c8fd4 100644
-  #if defined( __sparc )
-  #define HOST_ENDIAN 1
-  #if defined( __sparcv9 )
-+@@ -261,4 +274,8 @@ CPUI_DEBUG        --    This is the ONE debug switch that should be passed in
-+ //# define VARBANK_DEBUG
-+ #endif
-+
-++#if (defined (__NetBSD__) || defined (__FreeBSD__) || defined (__OpenBSD__) || defined (__HAIKU__))
-++#undef __linux__
-++#endif
-++
-+ #endif
+@@ -71,8 +77,12 @@ typedef char int1;
+ typedef uint8 uintp;
+ #endif
+ 
+-#if defined (__linux__) && defined (__i386__)
++#if defined (__MODERN_UNIX__) && (defined (__i386__) || defined (__arm__))
++#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++#define HOST_ENDIAN 1
++#else
+ #define HOST_ENDIAN 0
++#endif
+ typedef unsigned long uintm;
+ typedef long intm;
+ typedef unsigned long long uint8;
+@@ -86,8 +96,12 @@ typedef char int1;
+ typedef uint4 uintp;
+ #endif
+ 
+-#if defined (__linux__) && defined (__x86_64__)
++#if defined (__MODERN_UNIX__) && (defined (__x86_64__) || defined (__aarch64__))
++#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++#define HOST_ENDIAN 1
++#else
+ #define HOST_ENDIAN 0
++#endif
+ typedef unsigned int uintm;
+ typedef int intm;
+ typedef unsigned long uint8;
+@@ -166,7 +180,7 @@ typedef char int1;
+ typedef uint4 uintp;
+ #endif
+ 
+-#if defined (__APPLE_CC__) && defined (__x86_64__)
++#if defined (__APPLE_CC__) && (defined (__x86_64__) || defined (__aarch64__))
+ #define HOST_ENDIAN 0
+ typedef unsigned int uintm;
+ typedef int intm;
