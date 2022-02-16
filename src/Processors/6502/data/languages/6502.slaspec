@@ -168,8 +168,10 @@ ADDRI:  imm16   is imm16    { tmp:2 = imm16; export *:2 tmp; }
 
 :BIT OP2     is (op=0x24 | op=0x2C) ... & OP2
 {
+	N = (OP2 & 0x80) == 0x80;
+	V = (OP2 & 0x40) == 0x40;
 	local value = A & OP2;
-	resultFlags(value);
+	Z = (value == 0);
 }
 
 :BMI  REL			is op=0x30; REL
@@ -421,7 +423,7 @@ ADDRI:  imm16   is imm16    { tmp:2 = imm16; export *:2 tmp; }
 :SBC OP1     is (cc=1 & aaa=7) ... & OP1
 {
 	local op1 = OP1;
-	local result = A - op1 - C;
+	local result = A - op1 - !C;
 	
 	subtraction_flags1(A, op1, result);
 	A = result;	
