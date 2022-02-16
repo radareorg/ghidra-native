@@ -723,7 +723,7 @@ int4 Varnode::isConstantExtended(uintb &val) const
 /// to determine if the Varnode is getting used as an \b int, \b float, or \b pointer, etc.
 /// Throw an exception if no Datatype can be found at all.
 /// \return the determined Datatype
-Datatype *Varnode::getLocalType(void) const
+Datatype *Varnode::getLocalType(bool &blockup) const
 
 {
   Datatype *ct;
@@ -733,8 +733,13 @@ Datatype *Varnode::getLocalType(void) const
     return type;		// Not a partial lock, return the locked type
 
   ct = (Datatype *)0;
-  if (def != (PcodeOp *)0)
+  if (def != (PcodeOp *)0) {
     ct = def->outputTypeLocal();
+    if (def->stopsPropagation()) {
+      blockup = true;
+      return ct;
+    }
+  }
 
   list<PcodeOp *>::const_iterator iter;
   PcodeOp *op;
@@ -847,17 +852,15 @@ void Varnode::printRaw(ostream &s,const Varnode *vn)
 }
 
 /// \param m is the underlying address space manager
-/// \param uspace is the \e unique space
-/// \param ubase is the base offset for allocating temporaries
-VarnodeBank::VarnodeBank(AddrSpaceManager *m,AddrSpace *uspace,uintm ubase)
+VarnodeBank::VarnodeBank(AddrSpaceManager *m)
   : searchvn(0,Address(Address::m_minimal),(Datatype *)0)
 
 {
   manage = m;
   searchvn.flags = Varnode::input; // searchvn is always an input varnode of size 0
-  uniq_space = uspace;
-  uniqbase = ubase;
-  uniqid = ubase;
+  uniq_space = m->getUniqueSpace();
+  uniqbase = uniq_space->getTrans()->getUniqueStart(Translate::ANALYSIS);
+  uniqid = uniqbase;
   create_index = 0;
 }
 
