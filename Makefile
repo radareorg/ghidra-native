@@ -15,7 +15,7 @@ massage:
 	mv /tmp/patches/* patches
 	
 
-sync-decompiler decompiler-sync: ghidra
+sync-ghidra ghidra-sync sync-decompiler decompiler-sync: ghidra
 	rm -rf src/decompiler
 	cp -rf ghidra/Ghidra/Features/Decompiler/src/decompile/cpp src/decompiler
 	rm -rf src/Processor/*/src
@@ -34,6 +34,7 @@ sync-processors processors-sync: ghidra
 	rm -rf src/Processors
 	cp -rf ghidra/Ghidra/Processors src/Processors
 	$(MAKE) sync-stm8
+	$(MAKE) sync-hexagon
 
 sync-stm8:
 	rm -rf ghidra_STM8
