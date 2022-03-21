@@ -11,7 +11,7 @@ patch.done:
 massage:
 	mkdir -p /tmp/patches
 	git reset --hard
-	for a in $(shell ls patches/*.patch | sort -n) ; do patch -p1 < $$a ; git diff > /tmp/$$a ; git reset --hard ; done
+	for a in $(shell ls patches/*.patch | sort -n) ; do echo "patch -p1 < $$a" ; patch -p1 < $$a ; git diff > /tmp/$$a ; git reset --hard ; done
 	mv /tmp/patches/* patches
 	
 
