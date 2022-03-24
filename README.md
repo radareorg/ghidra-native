@@ -1,5 +1,4 @@
-ghidra-native
-============= 
+# ghidra-native
 
 [![ci](https://github.com/radareorg/ghidra-native/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/radareorg/ghidra-native/actions/workflows/ci.yml)
 

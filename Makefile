@@ -1,11 +1,18 @@
 all:
-	
+
+clean:
+	rm -f patch.done
+
+mrproper: clean
+	git reset --hard
+	git clean -xdf
+
 update sync: sync-processors sync-decompiler
 
 patch: patch.done
 
 patch.done:
-	for a in $(shell ls patches/*.patch | sort -n) ; do patch -p1 < $$a ; done
+	for a in $(shell ls patches/*.patch | sort -n) ; do echo "patch -p1 < $$a" ; patch -p1 < $$a ; done
 	touch patch.done
 
 massage:
