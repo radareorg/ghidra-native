@@ -17,8 +17,8 @@ jobs:
       - name: Pub
         uses: actions/upload-artifact@v2
         with:
-          name: ghidra-native-0.2.0.zip
-          path: ghidra-native-0.2.0.zip
+          name: ghidra-native-0.2.1.zip
+          path: ghidra-native-0.2.1.zip
   build-linux:
     runs-on: ubuntu-latest
     steps:
