@@ -1,0 +1,29 @@
+diff --git a/src/decompiler/printc.cc b/src/decompiler/printc.cc
+index 64ecda1..694162c 100644
+--- a/src/decompiler/printc.cc
++++ b/src/decompiler/printc.cc
+@@ -741,14 +741,21 @@ void PrintC::opPtradd(const PcodeOp *op)
+ 	printval = true;
+     }
+   }
++  int sv = op->GetIn(0);
+   if (printval)			// Use array notation if we need value
+     pushOp(&subscript,op);
+-  else				// just a '+'
+-    pushOp(&binary_plus,op);
++  else {
++    if (sv >= 0) {
++      pushOp(&binary_plus,op);
++    } else {
++      pushOp(&binary_minus,op);
++      sv = -sv;
++    }
++  }
+   // implied vn's pushed on in reverse order for efficiency
+   // see PrintLanguage::pushVnImplied
+   pushVnImplied(op->getIn(1),op,m);
+-  pushVnImplied(op->getIn(0),op,m);
++  pushVnImplied(sv,op,m);
+ }
+ 
+ static bool isValueFlexible(const Varnode *vn)
