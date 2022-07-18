@@ -14,11 +14,14 @@ jobs:
       - uses: actions/checkout@v2
       - name: Distribution Zip
         run: make dist
+      - name: Extract r2 version
+        run: echo "##[set-output name=Version;]$( cat VERSION )"
+        id: Extract
       - name: Pub
         uses: actions/upload-artifact@v2
         with:
-          name: ghidra-native-0.2.2.zip
-          path: ghidra-native-0.2.2.zip
+          name: ghidra-native-${{ steps.Extract.outputs.Version }}.zip
+          name: ghidra-native-${{ steps.Extract.outputs.Version }}.zip
   build-linux:
     runs-on: ubuntu-latest
     steps:
