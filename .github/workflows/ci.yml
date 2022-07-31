@@ -12,13 +12,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - name: Extract r2g version
+        run: echo "##[set-output name=version;]$( cat VERSION )"
+        id: r2gv
       - name: Distribution Zip
         run: make dist
       - name: Pub
         uses: actions/upload-artifact@v2
         with:
-          name: ghidra-native-0.2.2.zip
-          path: ghidra-native-0.2.2.zip
+          name: ghidra-native-${{ steps.r2gv.outputs.version }}.zip
+          path: ghidra-native-${{ steps.r2gv.outputs.version }}.zip
   build-linux:
     runs-on: ubuntu-latest
     steps:
