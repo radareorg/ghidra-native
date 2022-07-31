@@ -48,7 +48,7 @@ sync-wasm:
 	rm -rf ghidra_wasm
 	git clone https://github.com/andr3colonel/ghidra_wasm
 	mkdir -p src/Processors/wasm
-	cp -rf ghidra_wasm/data/languages/* src/Processors/wasm
+	cp -rf ghidra_wasm/* src/Processors/wasm
 
 sync-stm8:
 	rm -rf ghidra_STM8
