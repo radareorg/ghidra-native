@@ -42,6 +42,13 @@ sync-processors processors-sync: ghidra
 	cp -rf ghidra/Ghidra/Processors src/Processors
 	$(MAKE) sync-stm8
 	$(MAKE) sync-hexagon
+	$(MAKE) sync-wasm
+
+sync-wasm:
+	rm -rf ghidra_wasm
+	git clone https://github.com/andr3colonel/ghidra_wasm
+	mkdir -p src/Processors/wasm
+	cp -rf ghidra_wasm/data/languages/* src/Processors/wasm
 
 sync-stm8:
 	rm -rf ghidra_STM8
