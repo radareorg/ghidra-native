@@ -1,21 +1,19 @@
 diff --git a/src/decompiler/sleigh_arch.hh b/src/decompiler/sleigh_arch.hh
-index 84b55fd..c9c8ffb 100644
+index 695622e..1bccbef 100644
 --- a/src/decompiler/sleigh_arch.hh
 +++ b/src/decompiler/sleigh_arch.hh
-@@ -97,7 +97,6 @@ class SleighArchitecture : public Architecture {
+@@ -116,7 +116,6 @@ class SleighArchitecture : public Architecture {
  protected:
    ostream *errorstream;					///< Error stream associated with \b this SleighArchitecture
    // buildLoader must be filled in by derived class
 -  static void collectSpecFiles(ostream &errs);		///< Gather specification files in normal locations
    virtual Translate *buildTranslator(DocumentStorage &store);
    virtual PcodeInjectLibrary *buildPcodeInjectLibrary(void);
-   virtual void buildSpecFile(DocumentStorage &store);
-@@ -112,7 +111,9 @@ public:
-   virtual void printMessage(const string &message) const { *errorstream << message << endl; }
+   virtual void buildTypegrp(DocumentStorage &store);
+@@ -138,6 +137,8 @@ public:
    virtual ~SleighArchitecture(void);
    virtual string getDescription(void) const;
--  
-+
+ 
 +  static void collectSpecFiles(ostream &errs);		///< Gather specification files in normal locations
 +  static const vector<LanguageDescription> &getLanguageDescriptions() { return description; }
    static string normalizeProcessor(const string &nm);		///< Try to recover a \e language \e id processor field
