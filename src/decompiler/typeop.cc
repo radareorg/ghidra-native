@@ -15,7 +15,8 @@
  */
 #include "typeop.hh"
 #include "funcdata.hh"
-#include <cmath>
+
+namespace ghidra {
 
 /// \param inst will hold the array of TypeOp objects, indexed on op-code
 /// \param tlst is the corresponding TypeFactory for the Architecture
@@ -103,6 +104,7 @@ void TypeOp::registerInstructions(vector<TypeOp *> &inst,TypeFactory *tlst,
   inst[CPUI_INSERT] = new TypeOpInsert(tlst);
   inst[CPUI_EXTRACT] = new TypeOpExtract(tlst);
   inst[CPUI_POPCOUNT] = new TypeOpPopcount(tlst);
+  inst[CPUI_LZCOUNT] = new TypeOpLzcount(tlst);
 }
 
 /// Change basic data-type info (signed vs unsigned) and operator names ( '>>' vs '>>>' )
@@ -215,48 +217,26 @@ Datatype *TypeOp::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *c
   const Varnode *vn = op->getIn(slot);
   if (vn->isAnnotation()) return (Datatype *)0;
   Datatype *reqtype = op->inputTypeLocal(slot);
-  Datatype *curtype = vn->getHigh()->getType();
+  Datatype *curtype = vn->getHighTypeReadFacing(op);
   return castStrategy->castStandard(reqtype,curtype,false,true);
 }
 
-/// Many languages can mark an integer constant as explicitly \e unsigned. When
-/// the decompiler is deciding on \e cast operations, this is one of the checks
-/// it performs.  This method checks if the indicated input is an
-/// integer constant that needs to be coerced (as a source token) into being unsigned.
-/// If this is \b true, the input Varnode is marked for printing as explicitly \e unsigned.
-/// \param op is the PcodeOp taking the value as input
-/// \param slot is the input slot of the value
-/// \return \b true if the Varnode gets marked for printing
-bool TypeOp::markExplicitUnsigned(PcodeOp *op,int4 slot) const
-
+/// The data-type can propagate between any two Varnodes attached to the PcodeOp, either in or out.
+/// The pair \b invn and \b inslot indicate the Varnode holding the \e incoming data-type.
+/// The pair \b outvn and \b outslot indicate the Varnode that will hold the \e outgoing data-type.
+/// The data-type for the outgoing Varnode is returned, which may be different then the incoming data-type
+/// as the PcodeOp can transform the data-type as it propagates.
+/// \param alttype is the incoming data-type
+/// \param op is the PcodeOp to propagate across
+/// \param invn is the Varnode holding the incoming data-type
+/// \param outvn is the Varnode that will hold the outgoing data-type
+/// \param inslot indicates how the incoming Varnode is attached to the PcodeOp (-1 indicates output >= indicates input)
+/// \param outslot indicates how the outgoing Varnode is attached to the PcodeOp
+/// \return the outgoing data-type or null (to indicate no propagation)
+Datatype *TypeOp::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				int4 inslot,int4 outslot)
 {
-  if ((addlflags & inherits_sign)==0) return false;
-  if ((slot==1) && ((addlflags & inherits_sign_zero)!=0)) return false;
-  Varnode *vn = op->getIn(slot);
-  if (!vn->isConstant()) return false;
-  Datatype *dt = vn->getHigh()->getType();
-  type_metatype meta = dt->getMetatype();
-  if ((meta != TYPE_UINT)&&(meta != TYPE_UNKNOWN)) return false;
-  if (dt->isCharPrint()) return false;
-  if (dt->isEnumType()) return false;
-  if ((op->numInput() == 2) && ((addlflags & inherits_sign_zero)==0)) {
-    Varnode *firstvn = op->getIn(1-slot);
-    meta = firstvn->getHigh()->getType()->getMetatype();
-    if ((meta == TYPE_UINT)||(meta == TYPE_UNKNOWN))
-      return false;		// Other side of the operation will force the unsigned
-  }
-  // Check if type is going to get forced anyway
-  Varnode *outvn = op->getOut();
-  if (outvn != (Varnode *)0) {
-    if (outvn->isExplicit()) return false;
-    PcodeOp *lone = outvn->loneDescend();
-    if (lone != (PcodeOp *)0) {
-      if (!lone->inheritsSign()) return false;
-    }
-  }
-
-  vn->setUnsignedPrint();
-  return true;
+  return (Datatype *)0;		// Don't propagate by default
 }
 
 Datatype *TypeOpBinary::getOutputLocal(const PcodeOp *op) const
@@ -329,22 +309,36 @@ void TypeOpFunc::printRaw(ostream &s,const PcodeOp *op)
 TypeOpCopy::TypeOpCopy(TypeFactory *t) : TypeOp(t,CPUI_COPY,"copy")
 
 {
-  opflags = PcodeOp::unary;
+  opflags = PcodeOp::unary | PcodeOp::nocollapse;
   behave = new OpBehaviorCopy();
 }
 
 Datatype *TypeOpCopy::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
 
 {
-  Datatype *reqtype = op->getOut()->getHigh()->getType();	// Require input to be same type as output
-  Datatype *curtype = op->getIn(0)->getHigh()->getType();
+  Datatype *reqtype = op->getOut()->getHighTypeDefFacing();	// Require input to be same type as output
+  Datatype *curtype = op->getIn(0)->getHighTypeReadFacing(op);
   return castStrategy->castStandard(reqtype,curtype,false,true);
 }
 
 Datatype *TypeOpCopy::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
 
 {
-  return op->getIn(0)->getHigh()->getType();
+  return op->getIn(0)->getHighTypeReadFacing(op);
+}
+
+Datatype *TypeOpCopy::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				    int4 inslot,int4 outslot)
+{
+  if ((inslot!=-1)&&(outslot!=-1)) return (Datatype *)0; // Must propagate input <-> output
+  Datatype *newtype;
+  if (invn->isSpacebase()) {
+    AddrSpace *spc = tlst->getArch()->getDefaultDataSpace();
+    newtype = tlst->getTypePointer(alttype->getSize(),tlst->getBase(1,TYPE_UNKNOWN),spc->getWordSize());
+  }
+  else
+    newtype = alttype;
+  return newtype;
 }
 
 void TypeOpCopy::printRaw(ostream &s,const PcodeOp *op)
@@ -366,10 +360,10 @@ Datatype *TypeOpLoad::getInputCast(const PcodeOp *op,int4 slot,const CastStrateg
 
 {
   if (slot!=1) return (Datatype *)0;
-  Datatype *reqtype = op->getOut()->getHigh()->getType();	// Cast load pointer to match output
+  Datatype *reqtype = op->getOut()->getHighTypeDefFacing();	// Cast load pointer to match output
   const Varnode *invn = op->getIn(1);
-  Datatype *curtype = invn->getHigh()->getType();
-  AddrSpace *spc = Address::getSpaceFromConst(op->getIn(0)->getAddr());
+  Datatype *curtype = invn->getHighTypeReadFacing(op);
+  AddrSpace *spc = op->getIn(0)->getSpaceFromConst();
   // Its possible that the input type is not a pointer to the output type
   // (or even a pointer) due to cycle trimming in the type propagation algorithms
   if (curtype->getMetatype() == TYPE_PTR)
@@ -380,7 +374,7 @@ Datatype *TypeOpLoad::getInputCast(const PcodeOp *op,int4 slot,const CastStrateg
     // If we have a non-standard  in = ptr a  out = b  (a!=b)
     // We may want to postpone casting BEFORE the load in favor of casting AFTER the load
     type_metatype curmeta = curtype->getMetatype();
-    if ((curmeta!=TYPE_STRUCT)&&(curmeta!=TYPE_ARRAY)&&(curmeta!=TYPE_SPACEBASE)) {
+    if ((curmeta!=TYPE_STRUCT)&&(curmeta!=TYPE_ARRAY)&&(curmeta!=TYPE_SPACEBASE)&&(curmeta!=TYPE_UNION)) {
       // if the input is a pointer to a primitive type
       if ((!invn->isImplied())||(!invn->isWritten())||(invn->getDef()->code() != CPUI_CAST))
 	return (Datatype *)0;	// Postpone cast to output
@@ -397,7 +391,7 @@ Datatype *TypeOpLoad::getInputCast(const PcodeOp *op,int4 slot,const CastStrateg
 Datatype *TypeOpLoad::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
 
 {
-  Datatype *ct = op->getIn(1)->getHigh()->getType();
+  Datatype *ct = op->getIn(1)->getHighTypeReadFacing(op);
   if ((ct->getMetatype() == TYPE_PTR)&&(((TypePointer *)ct)->getPtrTo()->getSize() == op->getOut()->getSize()))
     return ((TypePointer *)ct)->getPtrTo();
   //  return TypeOp::getOutputToken(op);
@@ -406,7 +400,27 @@ Datatype *TypeOpLoad::getOutputToken(const PcodeOp *op,CastStrategy *castStrateg
   // In this case, there will have to be a cast, so we assume
   // the cast will cause the load to produce the type matching
   // its output
-  return op->getOut()->getHigh()->getType();
+  return op->getOut()->getHighTypeDefFacing();
+}
+
+Datatype *TypeOpLoad::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				    int4 inslot,int4 outslot)
+{
+  if ((inslot==0)||(outslot==0)) return (Datatype *)0; // Don't propagate along this edge
+  if (invn->isSpacebase()) return (Datatype *)0;
+  Datatype *newtype;
+  if (inslot == -1) {	 // Propagating output to input (value to ptr)
+    AddrSpace *spc = op->getIn(0)->getSpaceFromConst();
+    newtype = tlst->getTypePointerNoDepth(outvn->getTempType()->getSize(),alttype,spc->getWordSize());
+  }
+  else if (alttype->getMetatype()==TYPE_PTR) {
+    newtype = ((TypePointer *)alttype)->getPtrTo();
+    if (newtype->getSize() != outvn->getTempType()->getSize() || newtype->isVariableLength()) // Size must be appropriate
+	newtype = outvn->getTempType();
+  }
+  else
+    newtype = outvn->getTempType(); // Don't propagate anything
+  return newtype;
 }
 
 void TypeOpLoad::printRaw(ostream &s,const PcodeOp *op)
@@ -414,7 +428,7 @@ void TypeOpLoad::printRaw(ostream &s,const PcodeOp *op)
 {
   Varnode::printRaw(s,op->getOut());
   s << " = *(";
-  AddrSpace *spc = Address::getSpaceFromConst(op->getIn(0)->getAddr());
+  AddrSpace *spc = op->getIn(0)->getSpaceFromConst();
   s << spc->getName() << ',';
   Varnode::printRaw(s,op->getIn(1));
   s << ')';
@@ -432,13 +446,14 @@ Datatype *TypeOpStore::getInputCast(const PcodeOp *op,int4 slot,const CastStrate
 {
   if (slot==0) return (Datatype *)0;
   const Varnode *pointerVn = op->getIn(1);
-  Datatype *pointerType = pointerVn->getHigh()->getType();
-  Datatype *valueType = op->getIn(2)->getHigh()->getType();
-  AddrSpace *spc = Address::getSpaceFromConst(op->getIn(0)->getAddr());
+  Datatype *pointerType = pointerVn->getHighTypeReadFacing(op);
+  Datatype *pointedToType = pointerType;
+  Datatype *valueType = op->getIn(2)->getHighTypeReadFacing(op);
+  AddrSpace *spc = op->getIn(0)->getSpaceFromConst();
   int4 destSize;
   if (pointerType->getMetatype() == TYPE_PTR) {
-    pointerType = ((TypePointer *)pointerType)->getPtrTo();
-    destSize = pointerType->getSize();
+    pointedToType = ((TypePointer *)pointerType)->getPtrTo();
+    destSize = pointedToType->getSize();
   }
   else
     destSize = -1;
@@ -453,21 +468,41 @@ Datatype *TypeOpStore::getInputCast(const PcodeOp *op,int4 slot,const CastStrate
       if (pointerVn->isImplied() && pointerVn->loneDescend() == op) {
 	// CAST is already in place, test if it is casting to the right type
 	Datatype *newType = tlst->getTypePointer(pointerVn->getSize(), valueType, spc->getWordSize());
-	if (pointerVn->getHigh()->getType() != newType)
+	if (pointerType != newType)
 	  return newType;
       }
     }
     return (Datatype *)0;
   }
   // If we reach here, cast the value, not the pointer
-  return castStrategy->castStandard(pointerType,valueType,false,true);
+  return castStrategy->castStandard(pointedToType,valueType,false,true);
+}
+
+Datatype *TypeOpStore::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				     int4 inslot,int4 outslot)
+{
+  if ((inslot==0)||(outslot==0)) return (Datatype *)0; // Don't propagate along this edge
+  if (invn->isSpacebase()) return (Datatype *)0;
+  Datatype *newtype;
+  if (inslot==2) {		// Propagating value to ptr
+    AddrSpace *spc = op->getIn(0)->getSpaceFromConst();
+    newtype = tlst->getTypePointerNoDepth(outvn->getTempType()->getSize(),alttype,spc->getWordSize());
+  }
+  else if (alttype->getMetatype()==TYPE_PTR) {
+    newtype = ((TypePointer *)alttype)->getPtrTo();
+    if (newtype->getSize() != outvn->getTempType()->getSize() || newtype->isVariableLength())
+	newtype = outvn->getTempType();
+  }
+  else
+    newtype = outvn->getTempType(); // Don't propagate anything
+  return newtype;
 }
 
 void TypeOpStore::printRaw(ostream &s,const PcodeOp *op)
 
 {
   s << "*(";
-  AddrSpace *spc = Address::getSpaceFromConst(op->getIn(0)->getAddr());
+  AddrSpace *spc = op->getIn(0)->getSpaceFromConst();
   s << spc->getName() << ',';
   Varnode::printRaw(s,op->getIn(1));
   s << ") = ";
@@ -774,7 +809,7 @@ Datatype *TypeOpCallother::getOutputLocal(const PcodeOp *op) const
 TypeOpReturn::TypeOpReturn(TypeFactory *t) : TypeOp(t,CPUI_RETURN,"return")
 
 {
-  opflags = PcodeOp::special|PcodeOp::returns|PcodeOp::nocollapse;
+  opflags = PcodeOp::special|PcodeOp::returns|PcodeOp::nocollapse|PcodeOp::no_copy_propagation;
   behave = new OpBehavior(CPUI_RETURN,false,true); // Dummy behavior
 }
 
@@ -831,14 +866,57 @@ TypeOpEqual::TypeOpEqual(TypeFactory *t)
 Datatype *TypeOpEqual::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
 
 {
-  Datatype *reqtype = op->getIn(0)->getHigh()->getType();	// Input arguments should be the same type
-  Datatype *othertype = op->getIn(1)->getHigh()->getType();
+  Datatype *reqtype = op->getIn(0)->getHighTypeReadFacing(op);	// Input arguments should be the same type
+  Datatype *othertype = op->getIn(1)->getHighTypeReadFacing(op);
   if (0>othertype->typeOrder(*reqtype))
     reqtype = othertype;
   if (castStrategy->checkIntPromotionForCompare(op,slot))
     return reqtype;
-  othertype = op->getIn(slot)->getHigh()->getType();
+  othertype = op->getIn(slot)->getHighTypeReadFacing(op);
   return castStrategy->castStandard(reqtype,othertype,false,false);
+}
+
+Datatype *TypeOpEqual::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				     int4 inslot,int4 outslot)
+{
+  return TypeOpEqual::propagateAcrossCompare(alttype, tlst, invn, outvn, inslot, outslot);
+}
+
+/// \brief Propagate a given data-type across a \e comparison PcodeOp
+///
+/// This implements the propagateType() method for multiple p-code operators:
+///   CPUI_INT_EQUAL, CPUI_INT_NOTEQUAL, CPUI_INT_LESS, etc.
+/// The propagation must be across the input Varnodes of the comparison.
+/// \param alttype is the incoming data-type to propagate
+/// \param typegrp is the TypeFactory used for constructing transformed data-types
+/// \param invn is the Varnode holding the incoming data-type
+/// \param outvn is the Varnode that will hold the outgoing data-type
+/// \param inslot indicates how the incoming Varnode is attached to the PcodeOp (-1 indicates output >= indicates input)
+/// \param outslot indicates how the outgoing Varnode is attached to the PcodeOp
+/// \return the outgoing data-type or null (to indicate no propagation)
+Datatype *TypeOpEqual::propagateAcrossCompare(Datatype *alttype,TypeFactory *typegrp,Varnode *invn,
+					      Varnode *outvn,int4 inslot,int4 outslot)
+{
+  if (inslot == -1 || outslot == -1) return (Datatype *)0;
+  Datatype *newtype;
+  if (invn->isSpacebase()) {
+    AddrSpace *spc = typegrp->getArch()->getDefaultDataSpace();
+    newtype = typegrp->getTypePointer(alttype->getSize(),typegrp->getBase(1,TYPE_UNKNOWN),spc->getWordSize());
+  }
+  else if (alttype->isPointerRel() && !outvn->isConstant()) {
+    TypePointerRel *relPtr = (TypePointerRel *)alttype;
+    if (relPtr->getParent()->getMetatype() == TYPE_STRUCT && relPtr->getPointerOffset() >= 0) {
+	// If we know the pointer is in the middle of a structure, don't propagate across comparison operators
+	// as the two sides of the operator are likely to be different types , and the other side can also
+	// get data-type information from the structure pointer
+	newtype = typegrp->getTypePointer(relPtr->getSize(),typegrp->getBase(1,TYPE_UNKNOWN),relPtr->getWordSize());
+    }
+    else
+	newtype = alttype;
+  }
+  else
+    newtype = alttype;
+  return newtype;
 }
 
 TypeOpNotEqual::TypeOpNotEqual(TypeFactory *t)
@@ -852,14 +930,20 @@ TypeOpNotEqual::TypeOpNotEqual(TypeFactory *t)
 Datatype *TypeOpNotEqual::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
 
 {
-  Datatype *reqtype = op->getIn(0)->getHigh()->getType();	// Input arguments should be the same type
-  Datatype *othertype = op->getIn(1)->getHigh()->getType();
+  Datatype *reqtype = op->getIn(0)->getHighTypeReadFacing(op);	// Input arguments should be the same type
+  Datatype *othertype = op->getIn(1)->getHighTypeReadFacing(op);
   if (0>othertype->typeOrder(*reqtype))
     reqtype = othertype;
   if (castStrategy->checkIntPromotionForCompare(op,slot))
     return reqtype;
-  othertype = op->getIn(slot)->getHigh()->getType();
+  othertype = op->getIn(slot)->getHighTypeReadFacing(op);
   return castStrategy->castStandard(reqtype,othertype,false,false);
+}
+
+Datatype *TypeOpNotEqual::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+					int4 inslot,int4 outslot)
+{
+  return TypeOpEqual::propagateAcrossCompare(alttype, tlst, invn, outvn, inslot, outslot);
 }
 
 TypeOpIntSless::TypeOpIntSless(TypeFactory *t)
@@ -876,8 +960,16 @@ Datatype *TypeOpIntSless::getInputCast(const PcodeOp *op,int4 slot,const CastStr
   Datatype *reqtype = op->inputTypeLocal(slot);
   if (castStrategy->checkIntPromotionForCompare(op,slot))
     return reqtype;
-  Datatype *curtype = op->getIn(slot)->getHigh()->getType();
+  Datatype *curtype = op->getIn(slot)->getHighTypeReadFacing(op);
   return castStrategy->castStandard(reqtype,curtype,true,true);
+}
+
+Datatype *TypeOpIntSless::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+					int4 inslot,int4 outslot)
+{
+  if ((inslot==-1)||(outslot==-1)) return (Datatype *)0; // Must propagate input <-> input
+  if (alttype->getMetatype() != TYPE_INT) return (Datatype *)0;	// Only propagate signed things
+  return alttype;
 }
 
 TypeOpIntSlessEqual::TypeOpIntSlessEqual(TypeFactory *t)
@@ -894,8 +986,16 @@ Datatype *TypeOpIntSlessEqual::getInputCast(const PcodeOp *op,int4 slot,const Ca
   Datatype *reqtype = op->inputTypeLocal(slot);
   if (castStrategy->checkIntPromotionForCompare(op,slot))
     return reqtype;
-  Datatype *curtype = op->getIn(slot)->getHigh()->getType();
+  Datatype *curtype = op->getIn(slot)->getHighTypeReadFacing(op);
   return castStrategy->castStandard(reqtype,curtype,true,true);
+}
+
+Datatype *TypeOpIntSlessEqual::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+					     int4 inslot,int4 outslot)
+{
+  if ((inslot==-1)||(outslot==-1)) return (Datatype *)0; // Must propagate input <-> input
+  if (alttype->getMetatype() != TYPE_INT) return (Datatype *)0;	// Only propagate signed things
+  return alttype;
 }
 
 TypeOpIntLess::TypeOpIntLess(TypeFactory *t)
@@ -912,8 +1012,14 @@ Datatype *TypeOpIntLess::getInputCast(const PcodeOp *op,int4 slot,const CastStra
   Datatype *reqtype = op->inputTypeLocal(slot);
   if (castStrategy->checkIntPromotionForCompare(op,slot))
     return reqtype;
-  Datatype *curtype = op->getIn(slot)->getHigh()->getType();
+  Datatype *curtype = op->getIn(slot)->getHighTypeReadFacing(op);
   return castStrategy->castStandard(reqtype,curtype,true,false);
+}
+
+Datatype *TypeOpIntLess::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				       int4 inslot,int4 outslot)
+{
+  return TypeOpEqual::propagateAcrossCompare(alttype, tlst, invn, outvn, inslot, outslot);
 }
 
 TypeOpIntLessEqual::TypeOpIntLessEqual(TypeFactory *t)
@@ -930,8 +1036,14 @@ Datatype *TypeOpIntLessEqual::getInputCast(const PcodeOp *op,int4 slot,const Cas
   Datatype *reqtype = op->inputTypeLocal(slot);
   if (castStrategy->checkIntPromotionForCompare(op,slot))
     return reqtype;
-  Datatype *curtype = op->getIn(slot)->getHigh()->getType();
+  Datatype *curtype = op->getIn(slot)->getHighTypeReadFacing(op);
   return castStrategy->castStandard(reqtype,curtype,true,false);
+}
+
+Datatype *TypeOpIntLessEqual::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+					    int4 inslot,int4 outslot)
+{
+  return TypeOpEqual::propagateAcrossCompare(alttype, tlst, invn, outvn, inslot, outslot);
 }
 
 TypeOpIntZext::TypeOpIntZext(TypeFactory *t)
@@ -956,7 +1068,7 @@ Datatype *TypeOpIntZext::getInputCast(const PcodeOp *op,int4 slot,const CastStra
   Datatype *reqtype = op->inputTypeLocal(slot);
   if (castStrategy->checkIntPromotionForExtension(op))
     return reqtype;
-  Datatype *curtype = op->getIn(slot)->getHigh()->getType();
+  Datatype *curtype = op->getIn(slot)->getHighTypeReadFacing(op);
   return castStrategy->castStandard(reqtype,curtype,true,false);
 }
 
@@ -982,7 +1094,7 @@ Datatype *TypeOpIntSext::getInputCast(const PcodeOp *op,int4 slot,const CastStra
   Datatype *reqtype = op->inputTypeLocal(slot);
   if (castStrategy->checkIntPromotionForExtension(op))
     return reqtype;
-  Datatype *curtype = op->getIn(slot)->getHigh()->getType();
+  Datatype *curtype = op->getIn(slot)->getHighTypeReadFacing(op);
   return castStrategy->castStandard(reqtype,curtype,true,false);
 }
 
@@ -990,7 +1102,7 @@ TypeOpIntAdd::TypeOpIntAdd(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_ADD,"+",TYPE_INT,TYPE_INT)
 {
   opflags = PcodeOp::binary | PcodeOp::commutative;
-  addlflags = inherits_sign;
+  addlflags = arithmetic_op | inherits_sign;
   behave = new OpBehaviorIntAdd();
 }
 
@@ -1000,11 +1112,148 @@ Datatype *TypeOpIntAdd::getOutputToken(const PcodeOp *op,CastStrategy *castStrat
   return castStrategy->arithmeticOutputStandard(op);	// Use arithmetic typing rules
 }
 
+Datatype *TypeOpIntAdd::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				      int4 inslot,int4 outslot)
+{
+  type_metatype invnMeta = alttype->getMetatype();
+  if (invnMeta != TYPE_PTR) {
+    if (invnMeta != TYPE_INT && invnMeta != TYPE_UINT)
+      return (Datatype *)0;
+    if (outslot != 1 || !op->getIn(1)->isConstant())
+      return (Datatype *)0;
+  }
+  else if ((inslot!=-1)&&(outslot!=-1))
+    return (Datatype *)0; 	// Must propagate input <-> output for pointers
+  Datatype *newtype;
+  if (outvn->isConstant() && (alttype->getMetatype() != TYPE_PTR))
+    newtype = alttype;
+  else if (inslot == -1)		// Propagating output to input
+    newtype = op->getIn(outslot)->getTempType();	// Don't propagate pointer types this direction
+  else
+    newtype = propagateAddIn2Out(alttype,tlst,op,inslot);
+  return newtype;
+}
+
+/// \brief Propagate a pointer data-type through an ADD operation.
+///
+/// Assuming a pointer data-type from an ADD PcodeOp propagates from an input to
+/// its output, calculate the transformed data-type of the output Varnode, which
+/// will depend on details of the operation. If the edge doesn't make sense as
+/// "an ADD to a pointer", prevent the propagation by returning the output Varnode's
+/// current data-type.
+/// \param alttype is the resolved input pointer data-type
+/// \param typegrp is the TypeFactory for constructing the transformed Datatype
+/// \param op is the ADD operation
+/// \param inslot is the edge to propagate along
+/// \return the transformed Datatype or the original output Datatype
+Datatype *TypeOpIntAdd::propagateAddIn2Out(Datatype *alttype,TypeFactory *typegrp,PcodeOp *op,int4 inslot)
+
+{
+  TypePointer *pointer = (TypePointer *)alttype;
+  uintb offset;
+  int4 command = propagateAddPointer(offset,op,inslot,pointer->getPtrTo()->getSize());
+  if (command == 2) return op->getOut()->getTempType(); // Doesn't look like a good pointer add
+  TypePointer *parent = (TypePointer *)0;
+  int8 parentOff;
+  if (command != 3) {
+    int8 typeOffset = AddrSpace::addressToByteInt(offset,pointer->getWordSize());
+    bool allowWrap = (op->code() != CPUI_PTRSUB);
+    do {
+      pointer = pointer->downChain(typeOffset,parent,parentOff,allowWrap,*typegrp);
+      if (pointer == (TypePointer *)0)
+	break;
+    } while(typeOffset != 0);
+  }
+  if (parent != (TypePointer *)0) {
+    // If the innermost containing object is a TYPE_STRUCT or TYPE_ARRAY
+    // preserve info about this container
+    Datatype *pt;
+    if (pointer == (TypePointer *)0)
+      pt = typegrp->getBase(1,TYPE_UNKNOWN); // Offset does not point at a proper sub-type
+    else
+      pt = pointer->getPtrTo();	// The sub-type being directly pointed at
+    pointer = typegrp->getTypePointerRel(parent, pt, parentOff);
+  }
+  if (pointer == (TypePointer *)0) {
+    if (command == 0)
+      return alttype;
+    return  op->getOut()->getTempType();
+  }
+  if (op->getIn(inslot)->isSpacebase()) {
+    if (pointer->getPtrTo()->getMetatype() == TYPE_SPACEBASE)
+      pointer = typegrp->getTypePointer(pointer->getSize(),typegrp->getBase(1,TYPE_UNKNOWN),pointer->getWordSize());
+  }
+  return pointer;
+}
+
+/// Determine if the given data-type edge looks like a pointer
+/// propagating through an "add a constant" operation. We assume the input
+/// to the edge has a pointer data-type.  This routine returns one the commands:
+///   - 0  indicates this is "add a constant" adding a zero  (PTRSUB or PTRADD)
+///   - 1  indicates this is "add a constant" and the constant is passed back
+///   - 2  indicating the pointer does not propagate through
+///   - 3  the input data-type propagates through untransformed
+///
+/// \param off passes back the constant offset if the command is '0' or '1'
+/// \param op is the PcodeOp propagating the data-type
+/// \param slot is the input edge being propagated
+/// \param sz is the size of the data-type being pointed to
+/// \return a command indicating how the op should be treated
+int4 TypeOpIntAdd::propagateAddPointer(uintb &off,PcodeOp *op,int4 slot,int4 sz)
+
+{
+  if (op->code() == CPUI_PTRADD) {
+    if (slot != 0) return 2;
+    Varnode *constvn = op->getIn(1);
+    uintb mult = op->getIn(2)->getOffset();
+    if (constvn->isConstant()) {
+      off = (constvn->getOffset() * mult) & calc_mask(constvn->getSize()) ;
+      return (off == 0) ? 0 : 1;
+    }
+    if (sz != 0 && (mult % sz) != 0)
+      return 2;
+    return 3;
+  }
+  if (op->code() == CPUI_PTRSUB) {
+    if (slot != 0) return 2;
+    off = op->getIn(1)->getOffset();
+    return (off == 0) ? 0 : 1;
+  }
+  if (op->code() == CPUI_INT_ADD) {
+    Varnode *othervn = op->getIn(1-slot);
+				// Check if othervn is an offset
+    if (!othervn->isConstant()) {
+      if (othervn->isWritten()) {
+	PcodeOp *multop = othervn->getDef();
+	if (multop->code() == CPUI_INT_MULT) {
+	  Varnode *constvn = multop->getIn(1);
+	  if (constvn->isConstant()) {
+	    uintb mult = constvn->getOffset();
+	    if (mult == calc_mask(constvn->getSize()))	// If multiplying by -1
+	      return 2;		// Assume this is a pointer difference and don't propagate
+	    if (sz != 0 && (mult % sz) !=0)
+	      return 2;
+	  }
+	  return 3;
+	}
+      }
+      if (sz == 1)
+	return 3;
+      return 2;
+    }
+    if (othervn->getTempType()->getMetatype() == TYPE_PTR) // Check if othervn marked as ptr
+      return 2;
+    off = othervn->getOffset();
+    return (off == 0) ? 0 : 1;
+  }
+  return 2;
+}
+
 TypeOpIntSub::TypeOpIntSub(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_SUB,"-",TYPE_INT,TYPE_INT)
 {
   opflags = PcodeOp::binary;
-  addlflags = inherits_sign;
+  addlflags = arithmetic_op | inherits_sign;
   behave = new OpBehaviorIntSub();
 }
 
@@ -1018,6 +1267,7 @@ TypeOpIntCarry::TypeOpIntCarry(TypeFactory *t)
   : TypeOpFunc(t,CPUI_INT_CARRY,"CARRY",TYPE_BOOL,TYPE_UINT)
 {
   opflags = PcodeOp::binary;
+  addlflags = arithmetic_op;
   behave = new OpBehaviorIntCarry();
 }
 
@@ -1048,6 +1298,7 @@ TypeOpIntSborrow::TypeOpIntSborrow(TypeFactory *t)
   : TypeOpFunc(t,CPUI_INT_SBORROW,"SBORROW",TYPE_BOOL,TYPE_INT)
 {
   opflags = PcodeOp::binary;
+  addlflags = arithmetic_op;
   behave = new OpBehaviorIntSborrow();
 }
 
@@ -1063,7 +1314,7 @@ TypeOpInt2Comp::TypeOpInt2Comp(TypeFactory *t)
   : TypeOpUnary(t,CPUI_INT_2COMP,"-",TYPE_INT,TYPE_INT)
 {
   opflags = PcodeOp::unary;
-  addlflags = inherits_sign;
+  addlflags = arithmetic_op | inherits_sign;
   behave = new OpBehaviorInt2Comp();
 }
 
@@ -1077,7 +1328,7 @@ TypeOpIntNegate::TypeOpIntNegate(TypeFactory *t)
   : TypeOpUnary(t,CPUI_INT_NEGATE,"~",TYPE_UINT,TYPE_UINT)
 {
   opflags = PcodeOp::unary;
-  addlflags = inherits_sign;
+  addlflags = logical_op | inherits_sign;
   behave = new OpBehaviorIntNegate();
 }
 
@@ -1091,7 +1342,7 @@ TypeOpIntXor::TypeOpIntXor(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_XOR,"^",TYPE_UINT,TYPE_UINT)
 {
   opflags = PcodeOp::binary | PcodeOp::commutative;
-  addlflags = inherits_sign;
+  addlflags = logical_op | inherits_sign;
   behave = new OpBehaviorIntXor();
 }
 
@@ -1101,11 +1352,25 @@ Datatype *TypeOpIntXor::getOutputToken(const PcodeOp *op,CastStrategy *castStrat
   return castStrategy->arithmeticOutputStandard(op);
 }
 
+Datatype *TypeOpIntXor::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				      int4 inslot,int4 outslot)
+{
+  if (!alttype->isPowerOfTwo()) return (Datatype *)0; // Only propagate flag enums
+  Datatype *newtype;
+  if (invn->isSpacebase()) {
+    AddrSpace *spc = tlst->getArch()->getDefaultDataSpace();
+    newtype = tlst->getTypePointer(alttype->getSize(),tlst->getBase(1,TYPE_UNKNOWN),spc->getWordSize());
+  }
+  else
+    newtype = alttype;
+  return newtype;
+}
+
 TypeOpIntAnd::TypeOpIntAnd(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_AND,"&",TYPE_UINT,TYPE_UINT)
 {
   opflags = PcodeOp::binary | PcodeOp::commutative;
-  addlflags = inherits_sign;
+  addlflags = logical_op | inherits_sign;
   behave = new OpBehaviorIntAnd();
 }
 
@@ -1115,11 +1380,25 @@ Datatype *TypeOpIntAnd::getOutputToken(const PcodeOp *op,CastStrategy *castStrat
   return castStrategy->arithmeticOutputStandard(op);
 }
 
+Datatype *TypeOpIntAnd::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				      int4 inslot,int4 outslot)
+{
+  if (!alttype->isPowerOfTwo()) return (Datatype *)0; // Only propagate flag enums
+  Datatype *newtype;
+  if (invn->isSpacebase()) {
+    AddrSpace *spc = tlst->getArch()->getDefaultDataSpace();
+    newtype = tlst->getTypePointer(alttype->getSize(),tlst->getBase(1,TYPE_UNKNOWN),spc->getWordSize());
+  }
+  else
+    newtype = alttype;
+  return newtype;
+}
+
 TypeOpIntOr::TypeOpIntOr(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_OR,"|",TYPE_UINT,TYPE_UINT)
 {
   opflags = PcodeOp::binary | PcodeOp::commutative;
-  addlflags = inherits_sign;
+  addlflags = logical_op | inherits_sign;
   behave = new OpBehaviorIntOr();
 }
 
@@ -1129,11 +1408,25 @@ Datatype *TypeOpIntOr::getOutputToken(const PcodeOp *op,CastStrategy *castStrate
   return castStrategy->arithmeticOutputStandard(op);
 }
 
+Datatype *TypeOpIntOr::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				     int4 inslot,int4 outslot)
+{
+  if (!alttype->isPowerOfTwo()) return (Datatype *)0; // Only propagate flag enums
+  Datatype *newtype;
+  if (invn->isSpacebase()) {
+    AddrSpace *spc = tlst->getArch()->getDefaultDataSpace();
+    newtype = tlst->getTypePointer(alttype->getSize(),tlst->getBase(1,TYPE_UNKNOWN),spc->getWordSize());
+  }
+  else
+    newtype = alttype;
+  return newtype;
+}
+
 TypeOpIntLeft::TypeOpIntLeft(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_LEFT,"<<",TYPE_INT,TYPE_INT)
 {
   opflags = PcodeOp::binary;
-  addlflags = inherits_sign | inherits_sign_zero;
+  addlflags = inherits_sign | inherits_sign_zero | shift_op;
   behave = new OpBehaviorIntLeft();
 }
 
@@ -1148,7 +1441,7 @@ Datatype *TypeOpIntLeft::getInputLocal(const PcodeOp *op,int4 slot) const
 Datatype *TypeOpIntLeft::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
 
 {
-  Datatype *res1 = op->getIn(0)->getHigh()->getType();
+  Datatype *res1 = op->getIn(0)->getHighTypeReadFacing(op);
   if (res1->getMetatype() == TYPE_BOOL)
     res1 = tlst->getBase(res1->getSize(),TYPE_INT);
   return res1;
@@ -1158,7 +1451,7 @@ TypeOpIntRight::TypeOpIntRight(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_RIGHT,">>",TYPE_UINT,TYPE_UINT)
 {
   opflags = PcodeOp::binary;
-  addlflags = inherits_sign | inherits_sign_zero;
+  addlflags = inherits_sign | inherits_sign_zero | shift_op;
   behave = new OpBehaviorIntRight();
 }
 
@@ -1176,7 +1469,7 @@ Datatype *TypeOpIntRight::getInputCast(const PcodeOp *op,int4 slot,const CastStr
   if (slot == 0) {
     const Varnode *vn = op->getIn(0);
     Datatype *reqtype = op->inputTypeLocal(slot);
-    Datatype *curtype = vn->getHigh()->getType();
+    Datatype *curtype = vn->getHighTypeReadFacing(op);
     int4 promoType = castStrategy->intPromotionType(vn);
     if (promoType != CastStrategy::NO_PROMOTION && ((promoType & CastStrategy::UNSIGNED_EXTENSION)==0))
       return reqtype;
@@ -1188,7 +1481,7 @@ Datatype *TypeOpIntRight::getInputCast(const PcodeOp *op,int4 slot,const CastStr
 Datatype *TypeOpIntRight::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
 
 {
-  Datatype *res1 = op->getIn(0)->getHigh()->getType();
+  Datatype *res1 = op->getIn(0)->getHighTypeReadFacing(op);
   if (res1->getMetatype() == TYPE_BOOL)
     res1 = tlst->getBase(res1->getSize(),TYPE_INT);
   return res1;
@@ -1198,7 +1491,7 @@ TypeOpIntSright::TypeOpIntSright(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_SRIGHT,">>",TYPE_INT,TYPE_INT)
 {
   opflags = PcodeOp::binary;
-  addlflags = inherits_sign | inherits_sign_zero;
+  addlflags = inherits_sign | inherits_sign_zero | shift_op;
   behave = new OpBehaviorIntSright();
 }
 
@@ -1218,7 +1511,7 @@ Datatype *TypeOpIntSright::getInputCast(const PcodeOp *op,int4 slot,const CastSt
   if (slot == 0) {
     const Varnode *vn = op->getIn(0);
     Datatype *reqtype = op->inputTypeLocal(slot);
-    Datatype *curtype = vn->getHigh()->getType();
+    Datatype *curtype = vn->getHighTypeReadFacing(op);
     int4 promoType = castStrategy->intPromotionType(vn);
     if (promoType != CastStrategy::NO_PROMOTION && ((promoType & CastStrategy::SIGNED_EXTENSION)==0))
       return reqtype;
@@ -1238,7 +1531,7 @@ Datatype *TypeOpIntSright::getInputLocal(const PcodeOp *op,int4 slot) const
 Datatype *TypeOpIntSright::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
 
 {
-  Datatype *res1 = op->getIn(0)->getHigh()->getType();
+  Datatype *res1 = op->getIn(0)->getHighTypeReadFacing(op);
   if (res1->getMetatype() == TYPE_BOOL)
     res1 = tlst->getBase(res1->getSize(),TYPE_INT);
   return res1;
@@ -1248,7 +1541,7 @@ TypeOpIntMult::TypeOpIntMult(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_MULT,"*",TYPE_INT,TYPE_INT)
 {
   opflags = PcodeOp::binary | PcodeOp::commutative;
-  addlflags = inherits_sign;
+  addlflags = arithmetic_op | inherits_sign;
   behave = new OpBehaviorIntMult();
 }
 
@@ -1262,7 +1555,7 @@ TypeOpIntDiv::TypeOpIntDiv(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_DIV,"/",TYPE_UINT,TYPE_UINT)
 {
   opflags = PcodeOp::binary;
-  addlflags = inherits_sign;
+  addlflags = arithmetic_op | inherits_sign;
   behave = new OpBehaviorIntDiv();
 }
 
@@ -1271,7 +1564,7 @@ Datatype *TypeOpIntDiv::getInputCast(const PcodeOp *op,int4 slot,const CastStrat
 {
   const Varnode *vn = op->getIn(slot);
   Datatype *reqtype = op->inputTypeLocal(slot);
-  Datatype *curtype = vn->getHigh()->getType();
+  Datatype *curtype = vn->getHighTypeReadFacing(op);
   int4 promoType = castStrategy->intPromotionType(vn);
   if (promoType != CastStrategy::NO_PROMOTION && ((promoType & CastStrategy::UNSIGNED_EXTENSION)==0))
     return reqtype;
@@ -1282,7 +1575,7 @@ TypeOpIntSdiv::TypeOpIntSdiv(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_SDIV,"/",TYPE_INT,TYPE_INT)
 {
   opflags = PcodeOp::binary;
-  addlflags = inherits_sign;
+  addlflags = arithmetic_op | inherits_sign;
   behave = new OpBehaviorIntSdiv();
 }
 
@@ -1291,7 +1584,7 @@ Datatype *TypeOpIntSdiv::getInputCast(const PcodeOp *op,int4 slot,const CastStra
 {
   const Varnode *vn = op->getIn(slot);
   Datatype *reqtype = op->inputTypeLocal(slot);
-  Datatype *curtype = vn->getHigh()->getType();
+  Datatype *curtype = vn->getHighTypeReadFacing(op);
   int4 promoType = castStrategy->intPromotionType(vn);
   if (promoType != CastStrategy::NO_PROMOTION && ((promoType & CastStrategy::SIGNED_EXTENSION)==0))
     return reqtype;
@@ -1302,7 +1595,7 @@ TypeOpIntRem::TypeOpIntRem(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_REM,"%",TYPE_UINT,TYPE_UINT)
 {
   opflags = PcodeOp::binary;
-  addlflags = inherits_sign | inherits_sign_zero;
+  addlflags = arithmetic_op | inherits_sign | inherits_sign_zero;
   behave = new OpBehaviorIntRem();
 }
 
@@ -1311,7 +1604,7 @@ Datatype *TypeOpIntRem::getInputCast(const PcodeOp *op,int4 slot,const CastStrat
 {
   const Varnode *vn = op->getIn(slot);
   Datatype *reqtype = op->inputTypeLocal(slot);
-  Datatype *curtype = vn->getHigh()->getType();
+  Datatype *curtype = vn->getHighTypeReadFacing(op);
   int4 promoType = castStrategy->intPromotionType(vn);
   if (promoType != CastStrategy::NO_PROMOTION && ((promoType & CastStrategy::UNSIGNED_EXTENSION)==0))
     return reqtype;
@@ -1322,7 +1615,7 @@ TypeOpIntSrem::TypeOpIntSrem(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_SREM,"%",TYPE_INT,TYPE_INT)
 {
   opflags = PcodeOp::binary;
-  addlflags = inherits_sign | inherits_sign_zero;
+  addlflags = arithmetic_op | inherits_sign | inherits_sign_zero;
   behave = new OpBehaviorIntSrem();
 }
 
@@ -1331,7 +1624,7 @@ Datatype *TypeOpIntSrem::getInputCast(const PcodeOp *op,int4 slot,const CastStra
 {
   const Varnode *vn = op->getIn(slot);
   Datatype *reqtype = op->inputTypeLocal(slot);
-  Datatype *curtype = vn->getHigh()->getType();
+  Datatype *curtype = vn->getHighTypeReadFacing(op);
   int4 promoType = castStrategy->intPromotionType(vn);
   if (promoType != CastStrategy::NO_PROMOTION && ((promoType & CastStrategy::SIGNED_EXTENSION)==0))
     return reqtype;
@@ -1342,6 +1635,7 @@ TypeOpBoolNegate::TypeOpBoolNegate(TypeFactory *t)
   : TypeOpUnary(t,CPUI_BOOL_NEGATE,"!",TYPE_BOOL,TYPE_BOOL)
 {
   opflags = PcodeOp::unary | PcodeOp::booloutput;
+  addlflags = logical_op;
   behave = new OpBehaviorBoolNegate();
 }
 
@@ -1349,6 +1643,7 @@ TypeOpBoolXor::TypeOpBoolXor(TypeFactory *t)
   : TypeOpBinary(t,CPUI_BOOL_XOR,"^^",TYPE_BOOL,TYPE_BOOL)
 {
   opflags = PcodeOp::binary | PcodeOp::commutative | PcodeOp::booloutput;
+  addlflags = logical_op;
   behave = new OpBehaviorBoolXor();
 }
 
@@ -1356,6 +1651,7 @@ TypeOpBoolAnd::TypeOpBoolAnd(TypeFactory *t)
   : TypeOpBinary(t,CPUI_BOOL_AND,"&&",TYPE_BOOL,TYPE_BOOL)
 {
   opflags = PcodeOp::binary | PcodeOp::commutative | PcodeOp::booloutput;
+  addlflags = logical_op;
   behave = new OpBehaviorBoolAnd();
 }
 
@@ -1363,6 +1659,7 @@ TypeOpBoolOr::TypeOpBoolOr(TypeFactory *t)
   : TypeOpBinary(t,CPUI_BOOL_OR,"||",TYPE_BOOL,TYPE_BOOL)
 {
   opflags = PcodeOp::binary | PcodeOp::commutative | PcodeOp::booloutput;
+  addlflags = logical_op;
   behave = new OpBehaviorBoolOr();
 }
 
@@ -1370,6 +1667,7 @@ TypeOpFloatEqual::TypeOpFloatEqual(TypeFactory *t,const Translate *trans)
   : TypeOpBinary(t,CPUI_FLOAT_EQUAL,"==",TYPE_BOOL,TYPE_FLOAT)
 {
   opflags = PcodeOp::binary | PcodeOp::booloutput | PcodeOp::commutative;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatEqual(trans);
 }
 
@@ -1377,6 +1675,7 @@ TypeOpFloatNotEqual::TypeOpFloatNotEqual(TypeFactory *t,const Translate *trans)
   : TypeOpBinary(t,CPUI_FLOAT_NOTEQUAL,"!=",TYPE_BOOL,TYPE_FLOAT)
 {
   opflags = PcodeOp::binary | PcodeOp::booloutput | PcodeOp::commutative;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatNotEqual(trans);
 }
 
@@ -1384,6 +1683,7 @@ TypeOpFloatLess::TypeOpFloatLess(TypeFactory *t,const Translate *trans)
   : TypeOpBinary(t,CPUI_FLOAT_LESS,"<",TYPE_BOOL,TYPE_FLOAT)
 {
   opflags = PcodeOp::binary | PcodeOp::booloutput;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatLess(trans);
 }
 
@@ -1391,6 +1691,7 @@ TypeOpFloatLessEqual::TypeOpFloatLessEqual(TypeFactory *t,const Translate *trans
   : TypeOpBinary(t,CPUI_FLOAT_LESSEQUAL,"<=",TYPE_BOOL,TYPE_FLOAT)
 {
   opflags = PcodeOp::binary | PcodeOp::booloutput;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatLessEqual(trans);
 }
 
@@ -1398,6 +1699,7 @@ TypeOpFloatNan::TypeOpFloatNan(TypeFactory *t,const Translate *trans)
   : TypeOpFunc(t,CPUI_FLOAT_NAN,"NAN",TYPE_BOOL,TYPE_FLOAT)
 {
   opflags = PcodeOp::unary | PcodeOp::booloutput;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatNan(trans);
 }
 
@@ -1405,6 +1707,7 @@ TypeOpFloatAdd::TypeOpFloatAdd(TypeFactory *t,const Translate *trans)
   : TypeOpBinary(t,CPUI_FLOAT_ADD,"+",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::binary | PcodeOp::commutative;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatAdd(trans);
 }
 
@@ -1412,6 +1715,7 @@ TypeOpFloatDiv::TypeOpFloatDiv(TypeFactory *t,const Translate *trans)
   : TypeOpBinary(t,CPUI_FLOAT_DIV,"/",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::binary;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatDiv(trans);
 }
 
@@ -1419,6 +1723,7 @@ TypeOpFloatMult::TypeOpFloatMult(TypeFactory *t,const Translate *trans)
   : TypeOpBinary(t,CPUI_FLOAT_MULT,"*",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::binary | PcodeOp::commutative;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatMult(trans);
 }
 
@@ -1426,6 +1731,7 @@ TypeOpFloatSub::TypeOpFloatSub(TypeFactory *t,const Translate *trans)
   : TypeOpBinary(t,CPUI_FLOAT_SUB,"-",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::binary;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatSub(trans);
 }
 
@@ -1433,6 +1739,7 @@ TypeOpFloatNeg::TypeOpFloatNeg(TypeFactory *t,const Translate *trans)
   : TypeOpUnary(t,CPUI_FLOAT_NEG,"-",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::unary;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatNeg(trans);
 }
 
@@ -1440,6 +1747,7 @@ TypeOpFloatAbs::TypeOpFloatAbs(TypeFactory *t,const Translate *trans)
   : TypeOpFunc(t,CPUI_FLOAT_ABS,"ABS",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::unary;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatAbs(trans);
 }
 
@@ -1447,6 +1755,7 @@ TypeOpFloatSqrt::TypeOpFloatSqrt(TypeFactory *t,const Translate *trans)
   : TypeOpFunc(t,CPUI_FLOAT_SQRT,"SQRT",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::unary;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatSqrt(trans);
 }
 
@@ -1454,6 +1763,7 @@ TypeOpFloatInt2Float::TypeOpFloatInt2Float(TypeFactory *t,const Translate *trans
   : TypeOpFunc(t,CPUI_FLOAT_INT2FLOAT,"INT2FLOAT",TYPE_FLOAT,TYPE_INT)
 {
   opflags = PcodeOp::unary;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatInt2Float(trans);
 }
 
@@ -1461,6 +1771,7 @@ TypeOpFloatFloat2Float::TypeOpFloatFloat2Float(TypeFactory *t,const Translate *t
   : TypeOpFunc(t,CPUI_FLOAT_FLOAT2FLOAT,"FLOAT2FLOAT",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::unary;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatFloat2Float(trans);
 }
 
@@ -1468,6 +1779,7 @@ TypeOpFloatTrunc::TypeOpFloatTrunc(TypeFactory *t,const Translate *trans)
   : TypeOpFunc(t,CPUI_FLOAT_TRUNC,"TRUNC",TYPE_INT,TYPE_FLOAT)
 {
   opflags = PcodeOp::unary;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatTrunc(trans);
 }
 
@@ -1475,6 +1787,7 @@ TypeOpFloatCeil::TypeOpFloatCeil(TypeFactory *t,const Translate *trans)
   : TypeOpFunc(t,CPUI_FLOAT_CEIL,"CEIL",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::unary;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatCeil(trans);
 }
 
@@ -1482,6 +1795,7 @@ TypeOpFloatFloor::TypeOpFloatFloor(TypeFactory *t,const Translate *trans)
   : TypeOpFunc(t,CPUI_FLOAT_FLOOR,"FLOOR",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::unary;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatFloor(trans);
 }
 
@@ -1489,6 +1803,7 @@ TypeOpFloatRound::TypeOpFloatRound(TypeFactory *t,const Translate *trans)
   : TypeOpFunc(t,CPUI_FLOAT_ROUND,"ROUND",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::unary;
+  addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatRound(trans);
 }
 
@@ -1497,6 +1812,22 @@ TypeOpMulti::TypeOpMulti(TypeFactory *t) : TypeOp(t,CPUI_MULTIEQUAL,"?")
 {
   opflags = PcodeOp::special | PcodeOp::marker|PcodeOp::nocollapse;
   behave = new OpBehavior(CPUI_MULTIEQUAL,false,true); // Dummy behavior
+}
+
+Datatype *TypeOpMulti::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				     int4 inslot,int4 outslot)
+{
+  if ((inslot!=-1)&&(outslot!=-1)) {
+    return (Datatype *)0; // Must propagate input <-> output
+  }
+  Datatype *newtype;
+  if (invn->isSpacebase()) {
+    AddrSpace *spc = tlst->getArch()->getDefaultDataSpace();
+    newtype = tlst->getTypePointer(alttype->getSize(),tlst->getBase(1,TYPE_UNKNOWN),spc->getWordSize());
+  }
+  else
+    newtype = alttype;
+  return newtype;
 }
 
 void TypeOpMulti::printRaw(ostream &s,const PcodeOp *op)
@@ -1537,6 +1868,23 @@ Datatype *TypeOpIndirect::getInputLocal(const PcodeOp *op,int4 slot) const
   return tlst->getTypePointer(op->getIn(0)->getSize(),ct,spc->getWordSize()); // Second parameter is code pointer
 }
 
+Datatype *TypeOpIndirect::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+					int4 inslot,int4 outslot)
+{
+  if (op->isIndirectCreation()) return (Datatype *)0;
+  if ((inslot==1)||(outslot==1)) return (Datatype *)0;
+  if ((inslot!=-1)&&(outslot!=-1)) return (Datatype *)0; // Must propagate input <-> output
+
+  Datatype *newtype;
+  if (invn->isSpacebase()) {
+    AddrSpace *spc = tlst->getArch()->getDefaultDataSpace();
+    newtype = tlst->getTypePointer(alttype->getSize(),tlst->getBase(1,TYPE_UNKNOWN),spc->getWordSize());
+  }
+  else
+    newtype = alttype;
+  return newtype;
+}
+
 void TypeOpIndirect::printRaw(ostream &s,const PcodeOp *op)
 
 {
@@ -1557,6 +1905,10 @@ TypeOpPiece::TypeOpPiece(TypeFactory *t)
 {
   opflags = PcodeOp::binary;
   behave = new OpBehaviorPiece();
+  nearPointerSize = 0;
+  farPointerSize = t->getSizeOfAltPointer();
+  if (farPointerSize != 0)
+    nearPointerSize = t->getSizeOfPointer();
 }
 
 string TypeOpPiece::getOperatorName(const PcodeOp *op) const
@@ -1568,15 +1920,63 @@ string TypeOpPiece::getOperatorName(const PcodeOp *op) const
   return s.str();
 }
 
+Datatype *TypeOpPiece::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
+
+{
+  return (Datatype *)0;		// Never need a cast into a PIECE
+}
+
 Datatype *TypeOpPiece::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
 
 {
   const Varnode *vn = op->getOut();
-  Datatype *dt = vn->getHigh()->getType();
+  Datatype *dt = vn->getHighTypeDefFacing();
   type_metatype meta = dt->getMetatype();
   if ((meta == TYPE_INT)||(meta == TYPE_UINT))		// PIECE casts to uint or int, based on output
     return dt;
   return tlst->getBase(vn->getSize(),TYPE_UINT);	// If output is unknown or pointer, treat as cast to uint
+}
+
+Datatype *TypeOpPiece::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				     int4 inslot,int4 outslot)
+{
+  if (nearPointerSize != 0 && alttype->getMetatype() == TYPE_PTR) {
+    if (inslot == 1 && outslot == -1) {
+      if (invn->getSize() == nearPointerSize && outvn->getSize() == farPointerSize)
+        return tlst->resizePointer((TypePointer *)alttype, farPointerSize);
+    }
+    else if (inslot == -1 && outslot == 1) {
+      if (invn->getSize() == farPointerSize && outvn->getSize() == nearPointerSize)
+        return tlst->resizePointer((TypePointer *)alttype, nearPointerSize);
+    }
+    return (Datatype *)0;
+  }
+  if (inslot != -1) return (Datatype *)0;
+  int8 byteOff = computeByteOffsetForComposite(op,outslot);
+  while(alttype != (Datatype *)0 && (byteOff != 0 || alttype->getSize() != outvn->getSize())) {
+    alttype = alttype->getSubType(byteOff, &byteOff);
+  }
+  return alttype;
+}
+
+/// \brief Compute the byte offset into an assumed composite data-type for an input to the given CPUI_PIECE
+///
+/// If the output Varnode is a composite data-type, the an input to PIECE represents a
+/// range of bytes starting at a particular offset within the data-type.  Return this offset, which
+/// depends on endianness of the output and the particular input.
+/// \param op is the given CPUI_PIECE
+/// \param slot is the slot of the particular input
+/// \return the byte offset into the composite represented by the input of the PIECE
+int4 TypeOpPiece::computeByteOffsetForComposite(const PcodeOp *op,int4 slot)
+
+{
+  const Varnode *inVn0 = op->getIn(0);
+  int byteOff;
+  if (inVn0->getSpace()->isBigEndian())
+    byteOff = (slot==0) ? 0 : inVn0->getSize();
+  else
+    byteOff = (slot==0) ? op->getIn(1)->getSize() : 0;
+  return byteOff;
 }
 
 TypeOpSubpiece::TypeOpSubpiece(TypeFactory *t)
@@ -1584,6 +1984,10 @@ TypeOpSubpiece::TypeOpSubpiece(TypeFactory *t)
 {
   opflags = PcodeOp::binary;
   behave = new OpBehaviorSubpiece();
+  nearPointerSize = 0;
+  farPointerSize = t->getSizeOfAltPointer();
+  if (farPointerSize != 0)
+    nearPointerSize = t->getSizeOfPointer();
 }
 
 string TypeOpSubpiece::getOperatorName(const PcodeOp *op) const
@@ -1595,14 +1999,77 @@ string TypeOpSubpiece::getOperatorName(const PcodeOp *op) const
   return s.str();
 }
 
+Datatype *TypeOpSubpiece::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
+
+{
+  return (Datatype *)0;		// Never need a cast into a SUBPIECE
+}
+
 Datatype *TypeOpSubpiece::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
 
 {
-  const Varnode *vn = op->getOut();
-  Datatype *dt = vn->getHigh()->getType();	// SUBPIECE prints as cast to whatever its output is
+  const Varnode *outvn = op->getOut();
+  const TypeField *field;
+  Datatype *ct = op->getIn(0)->getHighTypeReadFacing(op);
+  int8 offset;
+  int8 byteOff = computeByteOffsetForComposite(op);
+ field = ct->findTruncation(byteOff,outvn->getSize(),op,1,offset);	// Use artificial slot
+  if (field != (const TypeField *)0) {
+    if (outvn->getSize() == field->type->getSize())
+      return field->type;
+  }
+  Datatype *dt = outvn->getHighTypeDefFacing();	// SUBPIECE prints as cast to whatever its output is
   if (dt->getMetatype() != TYPE_UNKNOWN)
     return dt;
-  return tlst->getBase(vn->getSize(),TYPE_INT);	// If output is unknown, treat as cast to int
+  return tlst->getBase(outvn->getSize(),TYPE_INT);	// If output is unknown, treat as cast to int
+}
+
+Datatype *TypeOpSubpiece::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+					int4 inslot,int4 outslot)
+{
+  if (nearPointerSize != 0 && alttype->getMetatype() == TYPE_PTR && inslot == -1 && outslot == 0) {
+    // Try to propagate UP, producing a far pointer input from a near pointer output of the SUBPIECE
+    // The case of propagating DOWN is handled by the getSubType below
+    if (op->getIn(1)->getOffset() != 0)
+      return (Datatype *)0;
+    if (invn->getSize() == nearPointerSize && outvn->getSize() == farPointerSize)
+      return tlst->resizePointer((TypePointer *)alttype, farPointerSize);
+    return (Datatype *)0;
+  }
+  if (inslot != 0 || outslot != -1) return (Datatype *)0;	// Propagation must be from in0 to out
+  int8 byteOff = computeByteOffsetForComposite(op);
+  type_metatype meta = alttype->getMetatype();
+  if (meta == TYPE_UNION || meta == TYPE_PARTIALUNION) {
+    // NOTE: We use an artificial slot here to store the field being truncated to
+    // as the facing data-type for slot 0 is already to the parent (this TYPE_UNION)
+    const TypeField *field = alttype->resolveTruncation(byteOff,op,1,byteOff);
+    alttype = (field != (const TypeField *)0) ? field->type : (Datatype *)0;
+  }
+  while(alttype != (Datatype *)0 && (byteOff != 0 || alttype->getSize() != outvn->getSize())) {
+    alttype = alttype->getSubType(byteOff, &byteOff);
+  }
+  return alttype;
+}
+
+/// \brief Compute the byte offset into an assumed composite data-type produced by the given CPUI_SUBPIECE
+///
+/// If the input Varnode is a composite data-type, the extracted result of the SUBPIECE represent a
+/// range of bytes starting at a particular offset within the data-type.  Return this offset, which
+/// depends on endianness of the input.
+/// \param op is the given CPUI_SUBPIECE
+/// \return the byte offset into the composite represented by the output of the SUBPIECE
+int4 TypeOpSubpiece::computeByteOffsetForComposite(const PcodeOp *op)
+
+{
+  int4 outSize = op->getOut()->getSize();
+  int4 lsb = (int4)op->getIn(1)->getOffset();
+  const Varnode *vn = op->getIn(0);
+  int4 byteOff;
+  if (vn->getSpace()->isBigEndian())
+    byteOff = vn->getSize() - outSize - lsb;
+  else
+    byteOff = lsb;
+  return byteOff;
 }
 
 TypeOpCast::TypeOpCast(TypeFactory *t) : TypeOp(t,CPUI_CAST,"(cast)")
@@ -1624,6 +2091,7 @@ TypeOpPtradd::TypeOpPtradd(TypeFactory *t) : TypeOp(t,CPUI_PTRADD,"+")
 
 {
   opflags = PcodeOp::ternary | PcodeOp::nocollapse;
+  addlflags = arithmetic_op;
   behave = new OpBehavior(CPUI_PTRADD,false); // Dummy behavior
 }
 
@@ -1642,7 +2110,7 @@ Datatype *TypeOpPtradd::getOutputLocal(const PcodeOp *op) const
 Datatype *TypeOpPtradd::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
 
 {
-  return op->getIn(0)->getHigh()->getType();		// Cast to the input data-type
+  return op->getIn(0)->getHighTypeReadFacing(op);		// Cast to the input data-type
 }
 
 Datatype *TypeOpPtradd::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
@@ -1650,11 +2118,26 @@ Datatype *TypeOpPtradd::getInputCast(const PcodeOp *op,int4 slot,const CastStrat
 {
   if (slot==0) {		// The operation expects the type of the VARNODE
 				// not the (possibly different) type of the HIGH
-    Datatype *reqtype = op->getIn(0)->getType();
-    Datatype *curtype = op->getIn(0)->getHigh()->getType();
+    Datatype *reqtype = op->getIn(0)->getTypeReadFacing(op);
+    Datatype *curtype = op->getIn(0)->getHighTypeReadFacing(op);
     return castStrategy->castStandard(reqtype,curtype,false,false);
   }
   return TypeOp::getInputCast(op,slot,castStrategy);
+}
+
+Datatype *TypeOpPtradd::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				      int4 inslot,int4 outslot)
+{
+  if ((inslot == 2) || (outslot == 2)) return (Datatype *)0; // Don't propagate along this edge
+  if ((inslot != -1) && (outslot != -1)) return (Datatype *)0; // Must propagate input <-> output
+  type_metatype metain = alttype->getMetatype();
+  if (metain != TYPE_PTR) return (Datatype *)0;
+  Datatype *newtype;
+  if (inslot == -1)		// Propagating output to input
+    newtype = op->getIn(outslot)->getTempType();	// Don't propagate pointer types this direction
+  else
+    newtype = TypeOpIntAdd::propagateAddIn2Out(alttype,tlst,op,inslot);
+  return newtype;
 }
 
 void TypeOpPtradd::printRaw(ostream &s,const PcodeOp *op)
@@ -1678,6 +2161,7 @@ TypeOpPtrsub::TypeOpPtrsub(TypeFactory *t) : TypeOp(t,CPUI_PTRSUB,"->")
 				// But the typing information doesn't really
 				// allow this to be commutative.
   opflags = PcodeOp::binary|PcodeOp::nocollapse;
+  addlflags = arithmetic_op;
   behave = new OpBehavior(CPUI_PTRSUB,false); // Dummy behavior
 }
 
@@ -1698,8 +2182,8 @@ Datatype *TypeOpPtrsub::getInputCast(const PcodeOp *op,int4 slot,const CastStrat
 {
   if (slot==0) {		// The operation expects the type of the VARNODE
 				// not the (possibly different) type of the HIGH
-    Datatype *reqtype = op->getIn(0)->getType();
-    Datatype *curtype = op->getIn(0)->getHigh()->getType();
+    Datatype *reqtype = op->getIn(0)->getTypeReadFacing(op);
+    Datatype *curtype = op->getIn(0)->getHighTypeReadFacing(op);
     return castStrategy->castStandard(reqtype,curtype,false,false);
   }
   return TypeOp::getInputCast(op,slot,castStrategy);
@@ -1708,10 +2192,10 @@ Datatype *TypeOpPtrsub::getInputCast(const PcodeOp *op,int4 slot,const CastStrat
 Datatype *TypeOpPtrsub::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
 
 {
-  TypePointer *ptype = (TypePointer *)op->getIn(0)->getHigh()->getType();
+  TypePointer *ptype = (TypePointer *)op->getIn(0)->getHighTypeReadFacing(op);
   if (ptype->getMetatype() == TYPE_PTR) {
-    uintb offset = AddrSpace::addressToByte(op->getIn(1)->getOffset(),ptype->getWordSize());
-    uintb unusedOffset;
+    int8 offset = AddrSpace::addressToByte((int8)op->getIn(1)->getOffset(),ptype->getWordSize());
+    int8 unusedOffset;
     TypePointer *unusedParent;
     Datatype *rettype = ptype->downChain(offset,unusedParent,unusedOffset,false,*tlst);
     if ((offset==0)&&(rettype != (Datatype *)0))
@@ -1720,6 +2204,20 @@ Datatype *TypeOpPtrsub::getOutputToken(const PcodeOp *op,CastStrategy *castStrat
     return tlst->getTypePointer(op->getOut()->getSize(), rettype, ptype->getWordSize());
   }
   return TypeOp::getOutputToken(op,castStrategy);
+}
+
+Datatype *TypeOpPtrsub::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				      int4 inslot,int4 outslot)
+{
+  if ((inslot!=-1)&&(outslot!=-1)) return (Datatype *)0; // Must propagate input <-> output
+  type_metatype metain= alttype->getMetatype();
+  if (metain != TYPE_PTR) return (Datatype *)0;
+  Datatype *newtype;
+  if (inslot == -1)		// Propagating output to input
+    newtype = op->getIn(outslot)->getTempType();	// Don't propagate pointer types this direction
+  else
+    newtype = TypeOpIntAdd::propagateAddIn2Out(alttype,tlst,op,inslot);
+  return newtype;
 }
 
 void TypeOpPtrsub::printRaw(ostream &s,const PcodeOp *op)
@@ -1748,7 +2246,7 @@ void TypeOpSegment::printRaw(ostream &s,const PcodeOp *op)
   }
   s << getOperatorName(op);
   s << '(';
-  AddrSpace *spc = Address::getSpaceFromConst(op->getIn(0)->getAddr());
+  AddrSpace *spc = op->getIn(0)->getSpaceFromConst();
   s << spc->getName() << ',';
   Varnode::printRaw(s,op->getIn(1));
   s << ',';
@@ -1759,7 +2257,7 @@ void TypeOpSegment::printRaw(ostream &s,const PcodeOp *op)
 Datatype *TypeOpSegment::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
 
 {
-  return op->getIn(2)->getHigh()->getType(); // Assume type of ptr portion
+  return op->getIn(2)->getHighTypeReadFacing(op); // Assume type of ptr portion
 }
 
 Datatype *TypeOpSegment::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
@@ -1772,6 +2270,18 @@ Datatype *TypeOpSegment::getInputCast(const PcodeOp *op,int4 slot,const CastStra
 // Datatype *TypeOpSegment::getInputLocal(const PcodeOp *op,int4 slot) const
 // {
 // }
+
+Datatype *TypeOpSegment::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				       int4 inslot,int4 outslot)
+{
+  // Must propagate  slot2 <-> output
+  if ((inslot==0)||(inslot==1)) return (Datatype *)0;
+  if ((outslot==0)||(outslot==1)) return (Datatype *)0;
+  if (invn->isSpacebase()) return (Datatype *)0;
+  type_metatype metain = alttype->getMetatype();
+  if (metain != TYPE_PTR) return (Datatype *)0;
+  return tlst->resizePointer((TypePointer *)alttype, outvn->getSize());
+}
 
 TypeOpCpoolref::TypeOpCpoolref(TypeFactory *t) : TypeOp(t,CPUI_CPOOLREF,"cpoolref")
 
@@ -1831,6 +2341,16 @@ TypeOpNew::TypeOpNew(TypeFactory *t) : TypeOp(t,CPUI_NEW,"new")
   behave = new OpBehavior(CPUI_NEW,false,true);		// Dummy behavior
 }
 
+Datatype *TypeOpNew::propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				   int4 inslot,int4 outslot)
+{
+  if ((inslot != 0)||(outslot != -1)) return (Datatype *)0;
+  Varnode *vn0 = op->getIn(0);
+  if (!vn0->isWritten()) return (Datatype *)0;		// Don't propagate
+  if (vn0->getDef()->code() != CPUI_CPOOLREF) return (Datatype *)0;
+  return alttype;		// Propagate cpool result as result of new operator
+}
+
 void TypeOpNew::printRaw(ostream &s,const PcodeOp *op)
 
 {
@@ -1884,3 +2404,12 @@ TypeOpPopcount::TypeOpPopcount(TypeFactory *t)
   opflags = PcodeOp::unary;
   behave = new OpBehaviorPopcount();
 }
+
+TypeOpLzcount::TypeOpLzcount(TypeFactory *t)
+  : TypeOpFunc(t,CPUI_LZCOUNT,"LZCOUNT",TYPE_INT,TYPE_UNKNOWN)
+{
+  opflags = PcodeOp::unary;
+  behave = new OpBehaviorLzcount();
+}
+
+} // End namespace ghidra

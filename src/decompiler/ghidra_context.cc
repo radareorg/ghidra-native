@@ -15,15 +15,31 @@
  */
 #include "ghidra_context.hh"
 
+namespace ghidra {
+
 const TrackedSet &ContextGhidra::getTrackedSet(const Address &addr) const
 
 {
   cache.clear();
+  PackedDecode decoder(glb);
+  glb->getTrackedRegisters(addr,decoder);
 
-  Document *doc = ((ArchitectureGhidra *)glb)->getTrackedRegisters(addr);
-  Element *root = doc->getRoot();
-
-  restoreTracked(root,glb,cache);
-  delete doc;
+  uint4 elemId = decoder.openElement(ELEM_TRACKED_POINTSET);
+  decodeTracked(decoder,cache);
+  decoder.closeElement(elemId);
   return cache;
 }
+
+void ContextGhidra::decode(Decoder &decoder)
+
+{
+  decoder.skipElement();	// Ignore details handled by ghidra
+}
+
+void ContextGhidra::decodeFromSpec(Decoder &decoder)
+
+{
+  decoder.skipElement();	// Ignore details handled by ghidra
+}
+
+} // End namespace ghidra

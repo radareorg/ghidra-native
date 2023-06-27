@@ -18,6 +18,48 @@
 #include "flow.hh"
 #include "printc.hh"
 
+namespace ghidra {
+
+ElementId ELEM_ALIASBLOCK = ElementId("aliasblock",174);
+ElementId ELEM_ALLOWCONTEXTSET = ElementId("allowcontextset",175);
+ElementId ELEM_ANALYZEFORLOOPS = ElementId("analyzeforloops",176);
+ElementId ELEM_COMMENTHEADER = ElementId("commentheader",177);
+ElementId ELEM_COMMENTINDENT = ElementId("commentindent",178);
+ElementId ELEM_COMMENTINSTRUCTION = ElementId("commentinstruction",179);
+ElementId ELEM_COMMENTSTYLE = ElementId("commentstyle",180);
+ElementId ELEM_CONVENTIONPRINTING = ElementId("conventionprinting",181);
+ElementId ELEM_CURRENTACTION = ElementId("currentaction",182);
+ElementId ELEM_DEFAULTPROTOTYPE = ElementId("defaultprototype",183);
+ElementId ELEM_ERRORREINTERPRETED = ElementId("errorreinterpreted",184);
+ElementId ELEM_ERRORTOOMANYINSTRUCTIONS = ElementId("errortoomanyinstructions",185);
+ElementId ELEM_ERRORUNIMPLEMENTED = ElementId("errorunimplemented",186);
+ElementId ELEM_EXTRAPOP = ElementId("extrapop",187);
+ElementId ELEM_IGNOREUNIMPLEMENTED = ElementId("ignoreunimplemented",188);
+ElementId ELEM_INDENTINCREMENT = ElementId("indentincrement",189);
+ElementId ELEM_INFERCONSTPTR = ElementId("inferconstptr",190);
+ElementId ELEM_INLINE = ElementId("inline",191);
+ElementId ELEM_INPLACEOPS = ElementId("inplaceops",192);
+ElementId ELEM_INTEGERFORMAT = ElementId("integerformat",193);
+ElementId ELEM_JUMPLOAD = ElementId("jumpload",194);
+ElementId ELEM_MAXINSTRUCTION = ElementId("maxinstruction",195);
+ElementId ELEM_MAXLINEWIDTH = ElementId("maxlinewidth",196);
+ElementId ELEM_NAMESPACESTRATEGY = ElementId("namespacestrategy",197);
+ElementId ELEM_NOCASTPRINTING = ElementId("nocastprinting",198);
+ElementId ELEM_NORETURN = ElementId("noreturn",199);
+ElementId ELEM_NULLPRINTING = ElementId("nullprinting",200);
+ElementId ELEM_OPTIONSLIST = ElementId("optionslist",201);
+ElementId ELEM_PARAM1 = ElementId("param1",202);
+ElementId ELEM_PARAM2 = ElementId("param2",203);
+ElementId ELEM_PARAM3 = ElementId("param3",204);
+ElementId ELEM_PROTOEVAL = ElementId("protoeval",205);
+ElementId ELEM_SETACTION = ElementId("setaction",206);
+ElementId ELEM_SETLANGUAGE = ElementId("setlanguage",207);
+ElementId ELEM_SPLITDATATYPE = ElementId("splitdatatype",270);
+ElementId ELEM_STRUCTALIGN = ElementId("structalign",208);
+ElementId ELEM_TOGGLERULE = ElementId("togglerule",209);
+ElementId ELEM_WARNING = ElementId("warning",210);
+ElementId ELEM_JUMPTABLEMAX = ElementId("jumptablemax",271);
+
 /// If the parameter is "on" return \b true, if "off" return \b false.
 /// Any other value causes an exception.
 /// \param p is the parameter
@@ -40,7 +82,8 @@ bool ArchOption::onOrOff(const string &p)
 void OptionDatabase::registerOption(ArchOption *option)
 
 {
-  optionmap[option->getName()] = option;
+  uint4 id = ElementId::find(option->getName());	// Option name must match a known element name
+  optionmap[id] = option;
 }
 
 /// Register all possible ArchOption objects with this database and set-up the parsing map.
@@ -78,79 +121,79 @@ OptionDatabase::OptionDatabase(Architecture *g)
   registerOption(new OptionAllowContextSet());
   registerOption(new OptionSetAction());
   registerOption(new OptionSetLanguage());
+  registerOption(new OptionJumpTableMax());
   registerOption(new OptionJumpLoad());
   registerOption(new OptionToggleRule());
   registerOption(new OptionAliasBlock());
   registerOption(new OptionMaxInstruction());
   registerOption(new OptionNamespaceStrategy());
+  registerOption(new OptionSplitDatatypes());
 }
 
 OptionDatabase::~OptionDatabase(void)
 
 {
-  map<string,ArchOption *>::iterator iter;
+  map<uint4,ArchOption *>::iterator iter;
   for(iter=optionmap.begin();iter!=optionmap.end();++iter)
     delete (*iter).second;
 }
 
-/// Perform an \e option \e command directly, given its name and optional parameters
-/// \param nm is the registered name of the option
+/// Perform an \e option \e command directly, given its id and optional parameters
+/// \param nameId is the id of the option
 /// \param p1 is the first optional parameter
 /// \param p2 is the second optional parameter
 /// \param p3 is the third optional parameter
 /// \return the confirmation/failure method after trying to apply the option
-string OptionDatabase::set(const string &nm,const string &p1,const string &p2,const string &p3)
+string OptionDatabase::set(uint4 nameId,const string &p1,const string &p2,const string &p3)
 
 {
-  map<string,ArchOption *>::const_iterator iter;
-  iter = optionmap.find(nm);
+  map<uint4,ArchOption *>::const_iterator iter;
+  iter = optionmap.find(nameId);
   if (iter == optionmap.end())
-    throw ParseError("Unknown option: "+nm);
+    throw ParseError("Unknown option");
   ArchOption *opt = (*iter).second;
   return opt->apply(glb,p1,p2,p3);
 }
 
-/// Unwrap the name and optional parameters and call method set()
-/// \param el is the command XML tag
-void OptionDatabase::parseOne(const Element *el)
+/// Scan the name and optional parameters and call method set()
+/// \param decoder is the stream decoder
+void OptionDatabase::decodeOne(Decoder &decoder)
 
 {
-  const string &optname( el->getName() );
-  const List &list(el->getChildren());
-  List::const_iterator iter;
-  
   string p1,p2,p3;
 
-  iter = list.begin();
-  if (iter != list.end()) {
-    p1 = (*iter)->getContent();
-    ++iter;
-    if (iter != list.end()) {
-      p2 = (*iter)->getContent();
-      ++iter;
-      if (iter != list.end()) {
-	p3 = (*iter)->getContent();
-	++iter;
-	if (iter != list.end())
-	  throw LowlevelError("Too many parameters to option: "+optname);
+  uint4 elemId = decoder.openElement();
+  uint4 subId = decoder.openElement();
+  if (subId == ELEM_PARAM1) {
+    p1 = decoder.readString(ATTRIB_CONTENT);
+    decoder.closeElement(subId);
+    subId = decoder.openElement();
+    if (subId == ELEM_PARAM2) {
+      p2 = decoder.readString(ATTRIB_CONTENT);
+      decoder.closeElement(subId);
+      subId = decoder.openElement();
+      if (subId == ELEM_PARAM3) {
+	p3 = decoder.readString(ATTRIB_CONTENT);
+	decoder.closeElement(subId);
       }
     }
   }
-  else
-    p1 = el->getContent();	// If no children, content is param 1
-  set(optname,p1,p2,p3);
+  else if (subId == 0)
+    p1 = decoder.readString(ATTRIB_CONTENT);	// If no children, content is param 1
+  decoder.closeElement(elemId);
+  set(elemId,p1,p2,p3);
 }
 
-/// Parse the \<optionslist> tag, treating each sub-tag as an \e option \e command.
-/// \param el is the \<optionslist> tag
-void OptionDatabase::restoreXml(const Element *el)
+/// Parse an \<optionslist> element, treating each child as an \e option \e command.
+/// \param decoder is the stream decoder
+void OptionDatabase::decode(Decoder &decoder)
 
 {
-  const List &list(el->getChildren());
-  List::const_iterator iter;
+  uint4 elemId = decoder.openElement(ELEM_OPTIONSLIST);
 
-  for(iter=list.begin();iter!=list.end();++iter)
-    parseOne(*iter);
+  while(decoder.peekElement() != 0)
+    decodeOne(decoder);
+  decoder.closeElement(elemId);
 }
 
 /// \class OptionExtraPop
@@ -220,7 +263,10 @@ string OptionReadOnly::apply(Architecture *glb,const string &p1,const string &p2
 string OptionDefaultPrototype::apply(Architecture *glb,const string &p1,const string &p2,const string &p3) const
 
 {
-  glb->setDefaultModel(p1);
+  ProtoModel *model = glb->getModel(p1);
+  if (model == (ProtoModel *)0)
+    throw LowlevelError("Unknown prototype model :" + p1);
+  glb->setDefaultModel(model);
   return "Set default prototype to "+p1;
 }
 
@@ -727,7 +773,7 @@ string OptionProtoEval::apply(Architecture *glb,const string &p1,const string &p
   if (p1 == "default")
     model = glb->defaultfp;
   else {
-    model = glb->protoModels[p1];
+    model = glb->getModel(p1);
     if (model == (ProtoModel *)0)
       throw ParseError("Unknown prototype model: "+p1);
   }
@@ -748,6 +794,26 @@ string OptionSetLanguage::apply(Architecture *glb,const string &p1,const string 
   glb->setPrintLanguage(p1);
   res = "Decompiler produces "+p1;
   return res;
+}
+
+/// \class OptionJumpTableMax
+/// \brief Set the maximum number of entries that can be recovered for a single jump table
+///
+/// This option is an unsigned integer value used during analysis of jump tables.  It serves as a
+/// sanity check that the recovered number of entries for a jump table is reasonable and
+/// also acts as a resource limit on the number of destination addresses that analysis will attempt
+/// to follow from a single indirect jump.
+string OptionJumpTableMax::apply(Architecture *glb,const string &p1,const string &p2,const string &p3) const
+
+{
+  istringstream s(p1);
+  s.unsetf(ios::dec | ios::hex | ios::oct);
+  uint4 val = 0;
+  s >> val;
+  if (val==0)
+    throw ParseError("Must specify integer maximum");
+  glb->max_jumptable_size = val;
+  return "Maximum jumptable size set to "+p1;
 }
 
 /// \class OptionJumpLoad
@@ -877,3 +943,46 @@ string OptionNamespaceStrategy::apply(Architecture *glb,const string &p1,const s
   glb->print->setNamespaceStrategy(strategy);
   return "Namespace strategy set";
 }
+
+/// Possible value are:
+///   - (empty string) = 0
+///   - "struct"       = 1
+///   - "array"        = 2
+///   - "pointer"     = 4
+///
+/// \param val is the option string
+/// \return the corresponding configuration bit
+uint4 OptionSplitDatatypes::getOptionBit(const string &val)
+
+{
+  if (val.size() == 0) return 0;
+  if (val == "struct") return option_struct;
+  if (val == "array") return option_array;
+  if (val == "pointer") return option_pointer;
+  throw LowlevelError("Unknown data-type split option: "+val);
+}
+
+string OptionSplitDatatypes::apply(Architecture *glb,const string &p1,const string &p2,const string &p3) const
+
+{
+  uint4 oldConfig = glb->split_datatype_config;
+  glb->split_datatype_config = getOptionBit(p1);
+  glb->split_datatype_config |= getOptionBit(p2);
+  glb->split_datatype_config |= getOptionBit(p3);
+
+  if ((glb->split_datatype_config & (option_struct | option_array)) == 0) {
+    glb->allacts.toggleAction(glb->allacts.getCurrentName(),"splitcopy",false);
+    glb->allacts.toggleAction(glb->allacts.getCurrentName(),"splitpointer",false);
+  }
+  else {
+    bool pointers = (glb->split_datatype_config & option_pointer) != 0;
+    glb->allacts.toggleAction(glb->allacts.getCurrentName(),"splitcopy",true);
+    glb->allacts.toggleAction(glb->allacts.getCurrentName(),"splitpointer",pointers);
+  }
+
+  if (oldConfig == glb->split_datatype_config)
+    return "Split data-type configuration unchanged";
+  return "Split data-type configuration set";
+}
+
+} // End namespace ghidra

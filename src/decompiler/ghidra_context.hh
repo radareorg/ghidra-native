@@ -13,14 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __CONTEXT_GHIDRA__
-#define __CONTEXT_GHIDRA__
+#ifndef __GHIDRA_CONTEXT_HH__
+#define __GHIDRA_CONTEXT_HH__
 
 /// \file ghidra_context.hh
 /// \brief Obtaining context information from a Ghidra client
 
 #include "globalcontext.hh"
 #include "ghidra_arch.hh"
+
+namespace ghidra {
 
 /// \brief An implementation of a ContextDatabase obtaining context information via a Ghidra client
 ///
@@ -51,8 +53,8 @@ public:
   virtual const TrackedSet &getTrackedSet(const Address &addr) const;
 
   // Ignored routines (taken care of by GHIDRA)
-  virtual void restoreXml(const Element *el,const AddrSpaceManager *manage) {}
-  virtual void restoreFromSpec(const Element *el,const AddrSpaceManager *manage) {}
+  virtual void decode(Decoder &decoder);
+  virtual void decodeFromSpec(Decoder &decoder);
 
   // Unimplemented routines (should never be called)
   virtual int getContextSize(void) const {
@@ -63,8 +65,8 @@ public:
     throw LowlevelError("getContext should not be called for GHIDRA"); }
   virtual void registerVariable(const string &nm,int4 sbit,int4 ebit) {
     throw LowlevelError("registerVariable should not be called for GHIDRA"); }
-  virtual void saveXml(ostream &s) const {
-    throw LowlevelError("context::saveXml should not be called for GHIDRA"); }
+  virtual void encode(Encoder &encoder) const {
+    throw LowlevelError("context::encode should not be called for GHIDRA"); }
 
   virtual TrackedSet &createSet(const Address &addr1,const Address &addr2) {
     throw LowlevelError("createSet should not be called for GHIDRA"); }
@@ -72,4 +74,5 @@ public:
     throw LowlevelError("getTrackedDefault should not be called for GHIDRA"); }
 };
 
+} // End namespace ghidra
 #endif

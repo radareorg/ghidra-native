@@ -15,8 +15,8 @@
  */
 /// \file architecture.hh
 /// \brief Architecture and associated classes that help manage a single processor architecture and load image
-#ifndef __CPUI_ARCHITECTURE__
-#define __CPUI_ARCHITECTURE__
+#ifndef __ARCHITECTURE_HH__
+#define __ARCHITECTURE_HH__
 
 #include "capability.hh"
 #include "varmap.hh"
@@ -33,6 +33,8 @@
 #include "options.hh"
 #include "transform.hh"
 #include "prefersplit.hh"
+
+namespace ghidra {
 
 #ifdef CPUI_STATISTICS
 /// \brief Class for collecting statistics while processing over multiple functions
@@ -60,6 +62,50 @@ public:
 #endif
 
 class Architecture;
+
+extern AttributeId ATTRIB_ADDRESS;	///< Marshaling attribute "address"
+extern AttributeId ATTRIB_ADJUSTVMA;	///< Marshaling attribute "adjustvma"
+extern AttributeId ATTRIB_ENABLE;	///< Marshaling attribute "enable"
+extern AttributeId ATTRIB_GROUP;	///< Marshaling attribute "group"
+extern AttributeId ATTRIB_GROWTH;	///< Marshaling attribute "growth"
+extern AttributeId ATTRIB_KEY;		///< Marshaling attribute "key"
+extern AttributeId ATTRIB_LOADERSYMBOLS;	///< Marshaling attribute "loadersymbols"
+extern AttributeId ATTRIB_PARENT;	///< Marshaling attribute "parent"
+extern AttributeId ATTRIB_REGISTER;	///< Marshaling attribute "register"
+extern AttributeId ATTRIB_REVERSEJUSTIFY;	///< Marshaling attribute "reversejustify"
+extern AttributeId ATTRIB_SIGNEXT;	///< Marshaling attribute "signext"
+extern AttributeId ATTRIB_STYLE;	///< Marshaling attribute "style"
+
+extern ElementId ELEM_ADDRESS_SHIFT_AMOUNT;	///< Marshaling element \<address_shift_amount>
+extern ElementId ELEM_AGGRESSIVETRIM;		///< Marshaling element \<aggressivetrim>
+extern ElementId ELEM_COMPILER_SPEC;		///< Marshaling element \<compiler_spec>
+extern ElementId ELEM_DATA_SPACE;		///< Marshaling element \<data_space>
+extern ElementId ELEM_DEFAULT_MEMORY_BLOCKS;	///< Marshaling element \<default_memory_blocks>
+extern ElementId ELEM_DEFAULT_PROTO;		///< Marshaling element \<default_proto>
+extern ElementId ELEM_DEFAULT_SYMBOLS;		///< Marshaling element \<default_symbols>
+extern ElementId ELEM_EVAL_CALLED_PROTOTYPE;	///< Marshaling element \<eval_called_prototype>
+extern ElementId ELEM_EVAL_CURRENT_PROTOTYPE;	///< Marshaling element \<eval_current_prototype>
+extern ElementId ELEM_EXPERIMENTAL_RULES;	///< Marshaling element \<experimental_rules>
+extern ElementId ELEM_FLOWOVERRIDELIST;		///< Marshaling element \<flowoverridelist>
+extern ElementId ELEM_FUNCPTR;			///< Marshaling element \<funcptr>
+extern ElementId ELEM_GLOBAL;			///< Marshaling element \<global>
+extern ElementId ELEM_INCIDENTALCOPY;		///< Marshaling element \<incidentalcopy>
+extern ElementId ELEM_INFERPTRBOUNDS;		///< Marshaling element \<inferptrbounds>
+extern ElementId ELEM_MODELALIAS;		///< Marshaling element \<modelalias>
+extern ElementId ELEM_NOHIGHPTR;		///< Marshaling element \<nohighptr>
+extern ElementId ELEM_PROCESSOR_SPEC;		///< Marshaling element \<processor_spec>
+extern ElementId ELEM_PROGRAMCOUNTER;		///< Marshaling element \<programcounter>
+extern ElementId ELEM_PROPERTIES;		///< Marshaling element \<properties>
+extern ElementId ELEM_PROPERTY;			///< Marshaling element \<property>
+extern ElementId ELEM_READONLY;			///< Marshaling element \<readonly>
+extern ElementId ELEM_REGISTER_DATA;		///< Marshaling element \<register_data>
+extern ElementId ELEM_RULE;			///< Marshaling element \<rule>
+extern ElementId ELEM_SAVE_STATE;		///< Marshaling element \<save_state>
+extern ElementId ELEM_SEGMENTED_ADDRESS;	///< Marshaling element \<segmented_address>
+extern ElementId ELEM_SPACEBASE;		///< Marshaling element \<spacebase>
+extern ElementId ELEM_SPECEXTENSIONS;		///< Marshaling element \<specextensions>
+extern ElementId ELEM_STACKPOINTER;		///< Marshaling element \<stackpointer>
+extern ElementId ELEM_VOLATILE;			///< Marshaling element \<volatile>
 
 /// \brief Abstract extension point for building Architecture objects
 ///
@@ -126,6 +172,7 @@ public:
   int4 max_term_duplication;	///< Max terms duplicated without a new variable
   int4 max_basetype_size;	///< Maximum size of an "integer" type before creating an array type
   int4 min_funcsymbol_size;	///< Minimum size of a function symbol
+  uint4 max_jumptable_size;	///< Maximum number of entries in a single JumpTable
   bool aggressive_ext_trim;	///< Aggressively trim inputs that look like they are sign extended
   bool readonlypropagate;	///< true if readonly values should be treated as constants
   bool infer_pointers;		///< True if we should infer pointers from constants that are likely addresses
@@ -135,6 +182,7 @@ public:
   uint4 flowoptions;            ///< options passed to flow following engine
   uint4 max_instructions;	///< Maximum instructions that can be processed in one function
   int4 alias_block_level;	///< Aliases blocked by 0=none, 1=struct, 2=array, 3=all
+  uint4 split_datatype_config;	///< Toggle for data-types splitting: Bit 0=structs, 1=arrays, 2=pointers
   vector<Rule *> extra_pool_rules; ///< Extra rules that go in the main pool (cpu specific, experimental)
 
   Database *symboltab;		///< Memory map of global variables and functions
@@ -173,11 +221,12 @@ public:
   void resetDefaults(void);		///< Reset defaults values for options owned by \b this
   ProtoModel *getModel(const string &nm) const;		///< Get a specific PrototypeModel
   bool hasModel(const string &nm) const;		///< Does this Architecture have a specific PrototypeModel
+  ProtoModel *createUnknownModel(const string &modelName);	///< Create a model for an unrecognized name
   bool highPtrPossible(const Address &loc,int4 size) const; ///< Are pointers possible to the given location?
   AddrSpace *getSpaceBySpacebase(const Address &loc,int4 size) const; ///< Get space associated with a \e spacebase register
   const LanedRegister *getLanedRegister(const Address &loc,int4 size) const;	///< Get LanedRegister associated with storage
   int4 getMinimumLanedRegisterSize(void) const;		///< Get the minimum size of a laned register in bytes
-  void setDefaultModel(const string &nm);		///< Set the default PrototypeModel
+  void setDefaultModel(ProtoModel *model);		///< Set the default PrototypeModel
   void clearAnalysis(Funcdata *fd);			///< Clear analysis specific to a function
   void readLoaderSymbols(const string &delim);		 ///< Read any symbols from loader into database
   void collectBehaviors(vector<OpBehavior *> &behave) const;	///< Provide a list of OpBehavior objects
@@ -185,7 +234,7 @@ public:
   void setPrototype(const PrototypePieces &pieces);	///< Set the prototype for a particular function
   void setPrintLanguage(const string &nm);		///< Establish a particular output language
   void globalify(void);					///< Mark \e all spaces as global
-  void restoreFlowOverride(const Element *el);		///< Set flow overrides from XML
+  void decodeFlowOverride(Decoder &decoder);		///< Set flow overrides from XML
   virtual ~Architecture(void);				///< Destructor
 
   virtual string getDescription(void) const { return archid; }	///< Get a string describing \b this architecture
@@ -195,8 +244,8 @@ public:
   /// Write the given message to whatever the registered error stream is
   /// \param message is the error message
   virtual void printMessage(const string &message) const=0;
-  virtual void saveXml(ostream &s) const;		///< Serialize this architecture to XML
-  virtual void restoreXml(DocumentStorage &store);	///< Restore the Architecture state from an XML stream
+  virtual void encode(Encoder &encoder) const;		///< Encode \b this architecture to a stream
+  virtual void restoreXml(DocumentStorage &store);	///< Restore the Architecture state from XML documents
   virtual void nameFunction(const Address &addr,string &name) const;	///< Pick a default name for a function
 #ifdef OPACTION_DEBUG
   void setDebugStream(ostream *s) { debugstream = s; }	///< Establish the debug console stream
@@ -204,7 +253,7 @@ public:
 #endif
 protected:
   void addSpacebase(AddrSpace *basespace,const string &nm,const VarnodeData &ptrdata,
-		    int4 truncSize,bool isreversejustified,bool stackGrowth); ///< Create a new space and associated pointer
+		    int4 truncSize,bool isreversejustified,bool stackGrowth,bool isFormal);
   void addNoHighPtr(const Range &rng); ///< Add a new region where pointers do not exist
 
   // Factory routines for building this architecture
@@ -229,13 +278,48 @@ protected:
   /// \return the PcodeInjectLibrary object
   virtual PcodeInjectLibrary *buildPcodeInjectLibrary(void)=0;
 
-  virtual void buildTypegrp(DocumentStorage &store);		///< Build the data-type factory/container
-  virtual void buildCommentDB(DocumentStorage &store);		///< Build the comment database
-  virtual void buildStringManager(DocumentStorage &store);	///< Build the string manager
-  virtual void buildConstantPool(DocumentStorage &store);	///< Build the constant pool
+  /// \brief Build the data-type factory/container
+  ///
+  /// Build the TypeFactory object specific to \b this Architecture and
+  /// prepopulate it with the \e core types. Core types may be pulled
+  /// from the configuration information, or default core types are used.
+  /// \param store contains possible configuration information
+  virtual void buildTypegrp(DocumentStorage &store)=0;
+
+  /// \brief Build the comment database
+  ///
+  /// Build the container that holds comments in \b this Architecture.
+  /// \param store may hold configuration information
+  virtual void buildCommentDB(DocumentStorage &store)=0;
+
+  /// \brief Build the string manager
+  ///
+  /// Build container that holds decoded strings for \b this Architecture.
+  /// \param store may hold configuration information
+  virtual void buildStringManager(DocumentStorage &store)=0;
+
+  /// \brief Build the constant pool
+  ///
+  /// Some processor models (Java byte-code) need a database of constants.
+  /// The database is always built, but may remain empty.
+  /// \param store may hold configuration information
+  virtual void buildConstantPool(DocumentStorage &store)=0;
+
   virtual void buildInstructions(DocumentStorage &store);	///< Register the p-code operations
   virtual void buildAction(DocumentStorage &store);		///< Build the Action framework
-  virtual void buildContext(DocumentStorage &store);		///< Build the Context database
+
+  /// \brief Build the Context database
+  ///
+  /// Build the database which holds status register settings and other
+  /// information that can affect disassembly depending on context.
+  /// \param store may hold configuration information
+  virtual void buildContext(DocumentStorage &store)=0;
+
+  /// \brief Build any symbols from spec files
+  ///
+  /// Formal symbols described in a spec file are added to the global scope.
+  /// \param store may hold symbol elements
+  virtual void buildSymbols(DocumentStorage &store)=0;
 
   /// \brief Load any relevant specification files
   ///
@@ -264,25 +348,26 @@ protected:
   void parseCompilerConfig(DocumentStorage &store);	///< Apply compiler specific configuration
   void parseExtraRules(DocumentStorage &store);		///< Apply any Rule tags
 
-  void parseDynamicRule(const Element *el);		///< Apply details of a dynamic Rule object
-  ProtoModel *parseProto(const Element *el);		///< Build a proto-type model from an XML tag
-  void parseProtoEval(const Element *el);		///< Apply prototype evaluation configuration
-  void parseDefaultProto(const Element *el);		///< Apply default prototype model configuration
-  void parseGlobal(const Element *el);			///< Apply global space configuration
+  void decodeDynamicRule(Decoder &decoder);		///< Apply details of a dynamic Rule object
+  ProtoModel *decodeProto(Decoder &decoder);		///< Parse a proto-type model from a stream
+  void decodeProtoEval(Decoder &decoder);		///< Apply prototype evaluation configuration
+  void decodeDefaultProto(Decoder &decoder);		///< Apply default prototype model configuration
+  void decodeGlobal(Decoder &decoder,vector<RangeProperties> &rangeProps);	///< Parse information about global ranges
+  void addToGlobalScope(const RangeProperties &props);	///< Add a memory range to the set of addresses considered \e global
   void addOtherSpace(void);                         	///< Add OTHER space and all of its overlays to the symboltab
-  void parseReadOnly(const Element *el);		///< Apply read-only region configuration
-  void parseVolatile(const Element *el);		///< Apply volatile region configuration
-  void parseReturnAddress(const Element *el);		///< Apply return address configuration
-  void parseIncidentalCopy(const Element *el);		///< Apply incidental copy configuration
-  void parseLaneSizes(const Element *el);		///< Apply lane size configuration
-  void parseStackPointer(const Element *el);		///< Apply stack pointer configuration
-  void parseDeadcodeDelay(const Element *el);		///< Apply dead-code delay configuration
-  void parseInferPtrBounds(const Element *el);		///< Apply pointer inference bounds
-  void parseFuncPtrAlign(const Element *el);		///< Apply function pointer alignment configuration
-  void parseSpacebase(const Element *el);		///< Create an additional indexed space
-  void parseNoHighPtr(const Element *el);		///< Apply memory alias configuration
-  void parsePreferSplit(const Element *el);		///< Designate registers to be split
-  void parseAggressiveTrim(const Element *el);		///< Designate how to trim extension p-code ops
+  void decodeReadOnly(Decoder &decoder);		///< Apply read-only region configuration
+  void decodeVolatile(Decoder &decoder);		///< Apply volatile region configuration
+  void decodeReturnAddress(Decoder &decoder);		///< Apply return address configuration
+  void decodeIncidentalCopy(Decoder &decoder);		///< Apply incidental copy configuration
+  void decodeLaneSizes(Decoder &decoder);		///< Apply lane size configuration
+  void decodeStackPointer(Decoder &decoder);		///< Apply stack pointer configuration
+  void decodeDeadcodeDelay(Decoder &decoder);		///< Apply dead-code delay configuration
+  void decodeInferPtrBounds(Decoder &decoder);		///< Apply pointer inference bounds
+  void decodeFuncPtrAlign(Decoder &decoder);		///< Apply function pointer alignment configuration
+  void decodeSpacebase(Decoder &decoder);		///< Create an additional indexed space
+  void decodeNoHighPtr(Decoder &decoder);		///< Apply memory alias configuration
+  void decodePreferSplit(Decoder &decoder);		///< Designate registers to be split
+  void decodeAggressiveTrim(Decoder &decoder);		///< Designate how to trim extension p-code ops
 };
 
 /// \brief A resolver for segmented architectures
@@ -316,4 +401,5 @@ inline bool Architecture::highPtrPossible(const Address &loc,int4 size) const {
   return !nohighptr.inRange(loc,size);
 }
 
+} // End namespace ghidra
 #endif

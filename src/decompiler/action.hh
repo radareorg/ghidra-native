@@ -15,10 +15,12 @@
  */
 /// \file action.hh
 /// \brief Action, Rule, and other associates classes supporting transformations on function data-flow
-#ifndef __CPUI_ACTION__
-#define __CPUI_ACTION__
+#ifndef __ACTION_HH__
+#define __ACTION_HH__
 
 #include "block.hh"
+
+namespace ghidra {
 
 /// \brief The list of groups defining a \e root Action
 ///
@@ -128,8 +130,6 @@ public:
   virtual int4 apply(Funcdata &data)=0;
   virtual int4 print(ostream &s,int4 num,int4 depth) const;	///< Print a description of this Action to stream
   virtual void printState(ostream &s) const;			///< Print status to stream
-  virtual void saveXml(ostream &s) const {} 			///< Save specifics of this action to stream
-  virtual void restoreXml(const Element *el,Funcdata *fd) {}	///< Load specifics of action from XML
   virtual Action *getSubAction(const string &specify);		///< Retrieve a specific sub-action by name
   virtual Rule *getSubRule(const string &specify);		///< Retrieve a specific sub-rule by name
 };
@@ -323,4 +323,5 @@ public:
   void universalAction(Architecture *glb);		///< Build the universal action
 };
 
+} // End ghidra namespace
 #endif

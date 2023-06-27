@@ -26,6 +26,7 @@ sync-ghidra ghidra-sync sync-decompiler decompiler-sync: ghidra
 	rm -rf src/decompiler
 	cp -rf ghidra/Ghidra/Features/Decompiler/src/decompile/cpp src/decompiler
 	rm -rf src/Processor/*/src
+	rm -rf src/Processors/*/src
 
 V=$(shell cat VERSION)
 D=ghidra-native-$(V)

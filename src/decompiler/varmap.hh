@@ -16,10 +16,17 @@
 /// \file varmap.hh
 /// \brief Classes for keeping track of local variables and reconstructing stack layout
 
-#ifndef __CPUI_VARMAP__
-#define __CPUI_VARMAP__
+#ifndef __VARMAP_HH__
+#define __VARMAP_HH__
 
 #include "database.hh"
+
+namespace ghidra {
+
+extern AttributeId ATTRIB_LOCK;		///< Marshaling attribute "lock"
+extern AttributeId ATTRIB_MAIN;		///< Marshaling attribute "main"
+
+extern ElementId ELEM_LOCALDB;		///< Marshaling element \<localdb>
 
 /// \brief A symbol name recommendation with its associated storage location
 ///
@@ -105,7 +112,8 @@ public:
   bool reconcile(const RangeHint *b) const;
   bool contain(const RangeHint *b) const;
   bool preferred(const RangeHint *b,bool reconcile) const;
-  bool absorb(RangeHint *b);	///< Try to absorb the other RangeHint into \b this
+  bool attemptJoin(RangeHint *b);	///< Try to concatenate another RangeHint onto \b this
+  void absorb(RangeHint *b);	///< Absorb the other RangeHint into \b this
   bool merge(RangeHint *b,AddrSpace *space,TypeFactory *typeFactory);	///< Try to form the union of \b this with another RangeHint
   int4 compare(const RangeHint &op2) const;		///< Order \b this with another RangeHint
   static bool compareRanges(const RangeHint *a,const RangeHint *b) { return (a->compare(*b) < 0); }	///< Compare two RangeHint pointers
@@ -198,7 +206,8 @@ class ScopeLocal : public ScopeInternal {
   list<NameRecommend> nameRecommend;	///< Symbol name recommendations for specific addresses
   list<DynamicRecommend> dynRecommend;		///< Symbol name recommendations for dynamic locations
   list<TypeRecommend> typeRecommend;	///< Data-types for specific storage locations
-  uintb deepestParamOffset;		///< Deepest position of a parameter passed (to a called function) on the stack
+  uintb minParamOffset;		///< Minimum offset of parameter passed (to a called function) on the stack
+  uintb maxParamOffset;		///< Maximum offset of parameter passed (to a called function) on the stack
   bool stackGrowsNegative;	///< Marked \b true if the stack is considered to \e grow towards smaller offsets
   bool rangeLocked;		///< True if the subset of addresses \e mapped to \b this scope has been locked
   bool adjustFit(RangeHint &a) const;	///< Make the given RangeHint fit in the current Symbol map
@@ -208,6 +217,7 @@ class ScopeLocal : public ScopeInternal {
   void fakeInputSymbols(void);		///< Make sure all stack inputs have an associated Symbol
   void addRecommendName(Symbol *sym);	///< Convert the given symbol to a name recommendation
   void collectNameRecs(void);		///< Collect names of unlocked Symbols on the stack
+  void annotateRawStackPtr(void);	///< Generate placeholder PTRSUB off of stack pointer
 public:
   ScopeLocal(uint8 id,AddrSpace *spc,Funcdata *fd,Architecture *g);	///< Constructor
   virtual ~ScopeLocal(void) {}	///< Destructor
@@ -220,11 +230,14 @@ public:
   /// \return \b true is the Varnode can be used as unaffected storage
   bool isUnaffectedStorage(Varnode *vn) const { return (vn->getSpace() == space); }
 
+  bool isUnmappedUnaliased(Varnode *vn) const;	///< Check if a given unmapped Varnode should be treated as unaliased.
+
   void markNotMapped(AddrSpace *spc,uintb first,int4 sz,bool param);	///< Mark a specific address range is not mapped
 
 				// Routines that are specific to one address space
-  virtual void saveXml(ostream &s) const;
-  virtual void restoreXml(const Element *el);
+  virtual void encode(Encoder &encoder) const;
+  virtual void decode(Decoder &decoder);
+  virtual void decodeWrappingAttributes(Decoder &decoder);
   virtual string buildVariableName(const Address &addr,
 				   const Address &pc,
 				   Datatype *ct,
@@ -236,6 +249,9 @@ public:
   SymbolEntry *remapSymbolDynamic(Symbol *sym,uint8 hash,const Address &usepoint);
   void recoverNameRecommendationsForSymbols(void);
   void applyTypeRecommendations(void);		///< Try to apply recommended data-type information
+  bool hasTypeRecommendations(void) const { return !typeRecommend.empty(); }	///< Are there data-type recommendations
+  void addTypeRecommendation(const Address &addr,Datatype *dt);		///< Add a new data-type recommendation
 };
 
+} // End namespace ghidra
 #endif

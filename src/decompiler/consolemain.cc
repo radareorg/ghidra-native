@@ -15,8 +15,13 @@
  */
 #include <iostream>
 #include <cstdlib>
-
 #include "libdecomp.hh"
+
+namespace ghidra {
+
+using std::cin;
+using std::cout;
+using std::cerr;
 
 class IfcLoadFile : public IfaceDecompCommand {
 public:
@@ -71,7 +76,7 @@ void IfcLoadFile::execute(istream &s)
       else
 	*status->optr << "Wrong tag type for experimental rules: "+root->getName() << endl;
     }
-    catch(XmlError &err) {
+    catch(DecoderError &err) {
       *status->optr << err.explain << endl;
       *status->optr << "Skipping experimental rules" << endl;
     }
@@ -81,7 +86,7 @@ void IfcLoadFile::execute(istream &s)
   bool iserror = false;
   try {
     dcp->conf->init(store);
-  } catch(XmlError &err) {
+  } catch(DecoderError &err) {
     errmsg = err.explain;
     iserror = true;
   } catch(LowlevelError &err) {
@@ -132,7 +137,8 @@ void IfcSave::execute(istream &s)
   if (!fs)
     throw IfaceExecutionError("Unable to open file: "+savefile);
 
-  dcp->conf->saveXml(fs);
+  XmlEncode encoder(fs);
+  dcp->conf->encode(encoder);
   fs.close();
 }
 
@@ -155,7 +161,7 @@ void IfcRestore::execute(istream &s)
     dcp->conf->restoreXml(store);
   } catch(LowlevelError &err) {
     throw IfaceExecutionError(err.explain);
-  } catch(XmlError &err) {
+  } catch(DecoderError &err) {
     throw IfaceExecutionError(err.explain);
   }
   
@@ -165,9 +171,13 @@ void IfcRestore::execute(istream &s)
   *status->optr << savefile << " successfully loaded: " << dcp->conf->getDescription() << endl;
 }
 
+} // End namespace ghidra
+
 int main(int argc,char **argv)
 
 {
+  using namespace ghidra;
+
   const char *initscript = (const char *)0;
 
   {
@@ -212,11 +222,16 @@ int main(int argc,char **argv)
   status->registerCom(new IfcRestore(),"restore");
 
   if (initscript != (const char *)0) {
-    status->pushScript(initscript,"init> ");
-    status->setErrorIsDone(true);
+    try {
+      status->pushScript(initscript,"init> ");
+    } catch(IfaceParseError &err) {
+      *status->optr << err.explain << endl;
+      status->done = true;
+    }
   }
 
-  mainloop(status);
+  if (!status->done)
+    mainloop(status);
   int4 retval = status->isInError() ? 1 : 0;
 
 #ifdef CPUI_STATISTICS
@@ -234,4 +249,3 @@ int main(int argc,char **argv)
 
   exit(retval);
 }
-

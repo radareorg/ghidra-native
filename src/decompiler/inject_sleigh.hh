@@ -13,11 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __INJECT_SLEIGH__
-#define __INJECT_SLEIGH__
+#ifndef __INJECT_SLEIGH_HH__
+#define __INJECT_SLEIGH_HH__
 
 #include "pcodeinject.hh"
 #include "sleigh.hh"
+
+namespace ghidra {
 
 class InjectContextSleigh : public InjectContext {
 public:
@@ -25,7 +27,7 @@ public:
   ParserContext *pos;
   InjectContextSleigh(void) { pos = (ParserContext *)0; }
   virtual ~InjectContextSleigh(void);
-  virtual void saveXml(ostream &s) const {}	// We don't need this functionality for sleigh
+  virtual void encode(Encoder &encoder) const {}	// We don't need this functionality for sleigh
 };
 
 class InjectPayloadSleigh : public InjectPayload {
@@ -33,11 +35,13 @@ class InjectPayloadSleigh : public InjectPayload {
   ConstructTpl *tpl;
   string parsestring;
   string source;
+protected:
+  void decodeBody(Decoder &decoder);	///< Parse the <body> tag
 public:
   InjectPayloadSleigh(const string &src,const string &nm,int4 tp);
   virtual ~InjectPayloadSleigh(void);
   virtual void inject(InjectContext &context,PcodeEmit &emit) const;
-  virtual void restoreXml(const Element *el);
+  virtual void decode(Decoder &decoder);
   virtual void printTemplate(ostream &s) const;
   virtual string getSource(void) const { return source; }
 
@@ -52,13 +56,13 @@ class InjectPayloadCallfixup : public InjectPayloadSleigh {
   vector<string> targetSymbolNames;
 public:
   InjectPayloadCallfixup(const string &sourceName);
-  virtual void restoreXml(const Element *el);
+  virtual void decode(Decoder &decoder);
 };
 
 class InjectPayloadCallother : public InjectPayloadSleigh {
 public:
   InjectPayloadCallother(const string &sourceName);
-  virtual void restoreXml(const Element *el);
+  virtual void decode(Decoder &decoder);
 };
 
 class ExecutablePcodeSleigh : public ExecutablePcode {
@@ -70,7 +74,7 @@ protected:
   ExecutablePcodeSleigh(Architecture *g,const string &src,const string &nm);
   virtual ~ExecutablePcodeSleigh(void);
   virtual void inject(InjectContext &context,PcodeEmit &emit) const;
-  virtual void restoreXml(const Element *el);
+  virtual void decode(Decoder &decoder);
   virtual void printTemplate(ostream &s) const;
 };
 
@@ -80,8 +84,9 @@ class InjectPayloadDynamic : public InjectPayload {
 public:
   InjectPayloadDynamic(Architecture *g,const string &nm,int4 tp) : InjectPayload(nm,tp) { glb = g; dynamic = true; }
   virtual ~InjectPayloadDynamic(void);
-  void restoreEntry(const Element *el);
+  void decodeEntry(Decoder &decoder);
   virtual void inject(InjectContext &context,PcodeEmit &emit) const;
+  virtual void decode(Decoder &decoder) { throw LowlevelError("decode not supported for InjectPayloadDynamic"); }
   virtual void printTemplate(ostream &s) const { s << "dynamic"; }
   virtual string getSource(void) const { return "dynamic"; }
 };
@@ -98,7 +103,7 @@ protected:
   virtual void registerInject(int4 injectid);
 public:
   PcodeInjectLibrarySleigh(Architecture *g);
-  virtual void restoreDebug(const Element *el);
+  virtual void decodeDebug(Decoder &decoder);
   virtual int4 manualCallFixup(const string &name,const string &snippetstring);
   virtual int4 manualCallOtherFixup(const string &name,const string &outname,const vector<string> &inname,
 				    const string &snippet);
@@ -106,4 +111,5 @@ public:
   virtual const vector<OpBehavior *> &getBehaviors(void);
 };
 
+} // End namespace ghidra
 #endif
