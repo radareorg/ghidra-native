@@ -16,13 +16,15 @@
 /// \file typeop.hh
 /// \brief Data-type and behavior information associated with specific p-code op-codes.
 
-#ifndef __CPUI_TYPEOP__
-#define __CPUI_TYPEOP__
+#ifndef __TYPEOP_HH__
+#define __TYPEOP_HH__
 
 #include "cpool.hh"
 #include "variable.hh"
 #include "opbehavior.hh"
 #include "printlanguage.hh"
+
+namespace ghidra {
 
 class PcodeOp;
 class Translate;
@@ -38,7 +40,11 @@ class TypeOp {
 public:
   enum {
     inherits_sign = 1,		///< Operator token inherits signedness from its inputs
-    inherits_sign_zero = 2	///< Only inherits sign from first operand, not the second
+    inherits_sign_zero = 2,	///< Only inherits sign from first operand, not the second
+    shift_op = 4,		///< Shift operation
+    arithmetic_op = 8,		///< Operation involving addition, multiplication, or division
+    logical_op = 0x10,		///< Logical operation
+    floatingpoint_op = 0x20	///< Floating-point operation
   };
 protected:
   TypeFactory *tlst;		///< Pointer to data-type factory
@@ -57,7 +63,6 @@ public:
   OpCode getOpcode(void) const { return opcode; }	///< Get the op-code value
   uint4 getFlags(void) const { return opflags; }	///< Get the properties associated with the op-code
   OpBehavior *getBehavior(void) const { return behave; }	///< Get the behavior associated with the op-code
-  bool markExplicitUnsigned(PcodeOp *op,int4 slot) const;	///< Check if a constant input should be explicitly labeled as \e unsigned
 
   /// \brief Emulate the unary op-code on an input value
   ///
@@ -103,8 +108,23 @@ public:
 
   bool isCommutative(void) const;		///< Return \b true if this op-code is commutative
 
-  /// \brief Return \b true if the op-code inherits it signedness from its inputs
+  /// \brief Return \b true if the op-code inherits its signedness from its inputs
   bool inheritsSign(void) const { return ((addlflags & inherits_sign)!=0); }
+
+  /// \brief Return \b true if the op-code inherits its signedness from only its first input
+  bool inheritsSignFirstParamOnly(void) const { return ((addlflags & inherits_sign_zero)!=0); }
+
+  /// \brief Return \b true if the op-code is a shift (INT_LEFT, INT_RIGHT, or INT_SRIGHT)
+  bool isShiftOp(void) const { return ((addlflags & shift_op)!=0); }
+
+  /// \brief Return \b true if the opcode is INT_ADD, INT_MULT, INT_DIV, INT_REM, or other arithmetic op
+  bool isArithmeticOp(void) const { return ((addlflags & arithmetic_op)!=0); }
+
+  /// \brief Return \b true if the opcode is INT_AND, INT_OR, INT_XOR, or other logical op
+  bool isLogicalOp(void) const { return ((addlflags & logical_op)!=0); }
+
+  /// \brief Return \b true if the opcode is FLOAT_ADD, FLOAT_MULT, or other floating-point operation
+  bool isFloatingPointOp(void) const { return ((addlflags & floatingpoint_op)!=0); }
 
   /// \brief Find the minimal (or suggested) data-type of an output to \b this op-code
   virtual Datatype *getOutputLocal(const PcodeOp *op) const;
@@ -117,6 +137,10 @@ public:
 
   /// \brief Find the data-type of the input to a specific PcodeOp
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
+
+  /// \brief Propagate an incoming data-type across a specific PcodeOp
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
 
   /// \brief Push the specific PcodeOp to the emitter's RPN stack
   ///
@@ -208,6 +232,8 @@ public:
   TypeOpCopy(TypeFactory *t);			///< Constructor
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
   virtual Datatype *getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opCopy(op); }
   virtual void printRaw(ostream &s,const PcodeOp *op);
 };
@@ -219,6 +245,8 @@ public:
   //  virtual Datatype *getInputLocal(const PcodeOp *op,int4 slot) const;
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
   virtual Datatype *getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opLoad(op); }
   virtual void printRaw(ostream &s,const PcodeOp *op);
 };
@@ -229,6 +257,8 @@ public:
   TypeOpStore(TypeFactory *t);			///< Constructor
   //  virtual Datatype *getInputLocal(const PcodeOp *op,int4 slot) const;
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opStore(op); }
   virtual void printRaw(ostream &s,const PcodeOp *op);
 };
@@ -304,6 +334,10 @@ public:
   TypeOpEqual(TypeFactory *t);			///< Constructor
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntEqual(op); }
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
+  static Datatype *propagateAcrossCompare(Datatype *alttype,TypeFactory *typegrp,Varnode *invn,Varnode *outvn,
+					  int4 inslot,int4 outslot);
 };
 
 /// \brief Information about the INT_NOTEQUAL op-code
@@ -312,22 +346,28 @@ public:
   TypeOpNotEqual(TypeFactory *t);			///< Constructor
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntNotEqual(op); }
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
 };
 
 /// \brief Information about the INT_SLESS op-code
 class TypeOpIntSless : public TypeOpBinary {
 public:
   TypeOpIntSless(TypeFactory *t);			///< Constructor
-  virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntSless(op); }
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
+  virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntSless(op); }
 };
 
 /// \brief Information about the INT_SLESSEQUAL op-code
 class TypeOpIntSlessEqual : public TypeOpBinary {
 public:
   TypeOpIntSlessEqual(TypeFactory *t);			///< Constructor
-  virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntSlessEqual(op); }
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
+  virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntSlessEqual(op); }
 };
 
 /// \brief Information about the INT_LESS op-code
@@ -336,6 +376,8 @@ public:
   TypeOpIntLess(TypeFactory *t);			///< Constructor
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntLess(op); }
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
 };
 
 /// \brief Information about the INT_LESSEQUAL op-code
@@ -344,6 +386,8 @@ public:
   TypeOpIntLessEqual(TypeFactory *t);			///< Constructor
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntLessEqual(op); }
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
 };
 
 /// \brief Information about the INT_ZEXT op-code
@@ -370,6 +414,10 @@ public:
   TypeOpIntAdd(TypeFactory *t);			///< Constructor
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntAdd(op); }
   virtual Datatype *getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
+  static Datatype *propagateAddIn2Out(Datatype *alttype,TypeFactory *typegrp,PcodeOp *op,int4 inslot);
+  static int4 propagateAddPointer(uintb &off,PcodeOp *op,int4 slot,int4 sz);
 };
 
 /// \brief Information about the INT_SUB op-code
@@ -424,24 +472,30 @@ public:
 class TypeOpIntXor : public TypeOpBinary {
 public:
   TypeOpIntXor(TypeFactory *t);			///< Constructor
-  virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntXor(op); }
   virtual Datatype *getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
+  virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntXor(op); }
 };
 
 /// \brief Information about the INT_AND op-code
 class TypeOpIntAnd : public TypeOpBinary {
 public:
   TypeOpIntAnd(TypeFactory *t);			///< Constructor
-  virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntAnd(op); }
   virtual Datatype *getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
+  virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntAnd(op); }
 };
 
 /// \brief Information about the INT_OR op-code
 class TypeOpIntOr : public TypeOpBinary {
 public:
   TypeOpIntOr(TypeFactory *t);			///< Constructor
-  virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntOr(op); }
   virtual Datatype *getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
+  virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIntOr(op); }
 };
 
 /// \brief Information about the INT_LEFT op-code
@@ -672,6 +726,8 @@ public:
 class TypeOpMulti : public TypeOp {
 public:
   TypeOpMulti(TypeFactory *t);			///< Constructor
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opMultiequal(op); }
   virtual void printRaw(ostream &s,const PcodeOp *op);
 };
@@ -681,28 +737,40 @@ class TypeOpIndirect : public TypeOp {
 public:
   TypeOpIndirect(TypeFactory *t);			///< Constructor
   virtual Datatype *getInputLocal(const PcodeOp *op,int4 slot) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opIndirect(op); }
   virtual void printRaw(ostream &s,const PcodeOp *op);
 };
 
 /// \brief Information about the PIECE op-code
 class TypeOpPiece : public TypeOpFunc {
+  int4 nearPointerSize;		///< Size of near (truncated) pointer (if not 0)
+  int4 farPointerSize;		///< Size of far (extended) pointer (if not 0)
 public:
   TypeOpPiece(TypeFactory *t);			///< Constructor
+  virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
   virtual Datatype *getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
   virtual string getOperatorName(const PcodeOp *op) const;
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opPiece(op); }
+  static int4 computeByteOffsetForComposite(const PcodeOp *op,int4 slot);
 };
 
 /// \brief Information about the SUBPIECE op-code
 class TypeOpSubpiece : public TypeOpFunc {
+  int4 nearPointerSize;		///< Size of near (truncated) pointer (if not 0)
+  int4 farPointerSize;		///< Size of far (extended) pointer (if not 0)
 public:
   TypeOpSubpiece(TypeFactory *t);			///< Constructor
-  //  virtual Datatype *getOutputLocal(const PcodeOp *op) const;
-  //  virtual Datatype *getInputLocal(const PcodeOp *op,int4 slot) const;
+  virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
   virtual Datatype *getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
   virtual string getOperatorName(const PcodeOp *op) const;
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opSubpiece(op); }
+  static int4 computeByteOffsetForComposite(const PcodeOp *op);
 };
 
 /// \brief Information about the CAST op-code
@@ -723,6 +791,8 @@ public:
   virtual Datatype *getOutputLocal(const PcodeOp *op) const;
   virtual Datatype *getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const;
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opPtradd(op); }
   virtual void printRaw(ostream &s,const PcodeOp *op);
 };
@@ -735,6 +805,8 @@ public:
   virtual Datatype *getInputLocal(const PcodeOp *op,int4 slot) const;
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
   virtual Datatype *getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opPtrsub(op); }
   virtual void printRaw(ostream &s,const PcodeOp *op);
 };
@@ -754,6 +826,8 @@ public:
   //  virtual Datatype *getInputLocal(const PcodeOp *op,int4 slot) const;
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const;
   virtual Datatype *getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const;
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opSegmentOp(op); }
   virtual void printRaw(ostream &s,const PcodeOp *op);
 };
@@ -775,6 +849,8 @@ class TypeOpNew : public TypeOp {
 public:
   TypeOpNew(TypeFactory *t);			///< Constructor
   virtual Datatype *getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const { return (Datatype *)0; }  // Never needs casting
+  virtual Datatype *propagateType(Datatype *alttype,PcodeOp *op,Varnode *invn,Varnode *outvn,
+				  int4 inslot,int4 outslot);
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opNewOp(op); }
   virtual void printRaw(ostream &s,const PcodeOp *op);
 };
@@ -802,4 +878,12 @@ public:
   virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opPopcountOp(op); }
 };
 
+/// \brief Information about the LZCOUNT op-code
+class TypeOpLzcount : public TypeOpFunc {
+public:
+  TypeOpLzcount(TypeFactory *t);			///< Constructor
+  virtual void push(PrintLanguage *lng,const PcodeOp *op,const PcodeOp *readOp) const { lng->opLzcountOp(op); }
+};
+
+} // End namespace ghidra
 #endif

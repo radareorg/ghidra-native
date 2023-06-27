@@ -16,6 +16,40 @@
 #include "fspec.hh"
 #include "funcdata.hh"
 
+namespace ghidra {
+
+AttributeId ATTRIB_CUSTOM = AttributeId("custom",114);
+AttributeId ATTRIB_DOTDOTDOT = AttributeId("dotdotdot",115);
+AttributeId ATTRIB_EXTENSION = AttributeId("extension",116);
+AttributeId ATTRIB_HASTHIS = AttributeId("hasthis",117);
+AttributeId ATTRIB_INLINE = AttributeId("inline",118);
+AttributeId ATTRIB_KILLEDBYCALL = AttributeId("killedbycall",119);
+AttributeId ATTRIB_MAXSIZE = AttributeId("maxsize",120);
+AttributeId ATTRIB_MINSIZE = AttributeId("minsize",121);
+AttributeId ATTRIB_MODELLOCK = AttributeId("modellock",122);
+AttributeId ATTRIB_NORETURN = AttributeId("noreturn",123);
+AttributeId ATTRIB_POINTERMAX = AttributeId("pointermax",124);
+AttributeId ATTRIB_SEPARATEFLOAT = AttributeId("separatefloat",125);
+AttributeId ATTRIB_STACKSHIFT = AttributeId("stackshift",126);
+AttributeId ATTRIB_STRATEGY = AttributeId("strategy",127);
+AttributeId ATTRIB_THISBEFORERETPOINTER = AttributeId("thisbeforeretpointer",128);
+AttributeId ATTRIB_VOIDLOCK = AttributeId("voidlock",129);
+
+ElementId ELEM_GROUP = ElementId("group",160);
+ElementId ELEM_INTERNALLIST = ElementId("internallist",161);
+ElementId ELEM_KILLEDBYCALL = ElementId("killedbycall",162);
+ElementId ELEM_LIKELYTRASH = ElementId("likelytrash",163);
+ElementId ELEM_LOCALRANGE = ElementId("localrange",164);
+ElementId ELEM_MODEL = ElementId("model",165);
+ElementId ELEM_PARAM = ElementId("param",166);
+ElementId ELEM_PARAMRANGE = ElementId("paramrange",167);
+ElementId ELEM_PENTRY = ElementId("pentry",168);
+ElementId ELEM_PROTOTYPE = ElementId("prototype",169);
+ElementId ELEM_RESOLVEPROTOTYPE = ElementId("resolveprototype",170);
+ElementId ELEM_RETPARAM = ElementId("retparam",171);
+ElementId ELEM_RETURNSYM = ElementId("returnsym",172);
+ElementId ELEM_UNAFFECTED = ElementId("unaffected",173);
+
 /// \brief Find a ParamEntry matching the given storage Varnode
 ///
 /// Search through the list backward.
@@ -46,42 +80,89 @@ void ParamEntry::resolveJoin(list<ParamEntry> &curList)
     return;
   }
   joinrec = spaceid->getManager()->findJoin(addressbase);
-  int4 mingrp = 1000;
-  int4 maxgrp = -1;
+  groupSet.clear();
   for(int4 i=0;i<joinrec->numPieces();++i) {
     const ParamEntry *entry = findEntryByStorage(curList, joinrec->getPiece(i));
     if (entry != (const ParamEntry *)0) {
-      if (entry->group < mingrp)
-	mingrp = entry->group;
-      int4 max = entry->group + entry->groupsize;
-      if (max > maxgrp)
-	maxgrp = max;
+      groupSet.insert(groupSet.end(),entry->groupSet.begin(),entry->groupSet.end());
+      // For output <pentry>, if the most signifigant part overlaps with an earlier <pentry>
+      // the least signifigant part is marked for extra checks, and vice versa.
+      flags |= (i==0) ? extracheck_low : extracheck_high;
     }
   }
-  if (maxgrp < 0 || mingrp >= 1000)
+  if (groupSet.empty())
     throw LowlevelError("<pentry> join must overlap at least one previous entry");
-  group = mingrp;
-  groupsize = (maxgrp - mingrp);
-  if (groupsize > joinrec->numPieces())
-    throw LowlevelError("<pentry> join must overlap sequential entries");
+  sort(groupSet.begin(),groupSet.end());
+  flags |= overlapping;
 }
 
-/// A ParamEntry with \e join storage must either overlap a single other ParamEntry or
-/// all pieces must overlap.
-/// \return \b true if \b this is a join whose pieces do not all overlap
-bool ParamEntry::isNonOverlappingJoin(void) const
+/// Search for overlaps of \b this with any previous entry.  If an overlap is discovered,
+/// verify the form is correct for the different ParamEntry to share \e group slots and
+/// reassign \b this group.
+/// \param curList is the list of previous entries
+void ParamEntry::resolveOverlap(list<ParamEntry> &curList)
 
 {
-  if (joinrec == (JoinRecord *)0)
-    return false;
-  return (joinrec->numPieces() != groupsize);
+  if (joinrec != (JoinRecord *)0)
+    return;		// Overlaps with join records dealt with in resolveJoin
+  vector<int4> overlapSet;
+  list<ParamEntry>::const_iterator iter,enditer;
+  Address addr(spaceid,addressbase);
+  enditer = curList.end();
+  --enditer;		// The last entry is \b this ParamEntry
+  for(iter=curList.begin();iter!=enditer;++iter) {
+    const ParamEntry &entry(*iter);
+    if (!entry.intersects(addr, size)) continue;
+    if (contains(entry)) {	// If this contains the intersecting entry
+      if (entry.isOverlap()) continue;	// Don't count resources (already counted overlapped entry)
+      overlapSet.insert(overlapSet.end(),entry.groupSet.begin(),entry.groupSet.end());
+      // For output <pentry>, if the most signifigant part overlaps with an earlier <pentry>
+      // the least signifigant part is marked for extra checks, and vice versa.
+      if (addressbase == entry.addressbase)
+	flags |= spaceid->isBigEndian() ? extracheck_low : extracheck_high;
+      else
+	flags |= spaceid->isBigEndian() ? extracheck_high : extracheck_low;
+    }
+    else
+      throw LowlevelError("Illegal overlap of <pentry> in compiler spec");
+  }
+
+  if (overlapSet.empty()) return;		// No overlaps
+  sort(overlapSet.begin(),overlapSet.end());
+  groupSet = overlapSet;
+  flags |= overlapping;
+}
+
+/// \param op2 is the other entry to compare
+/// \return \b true if the group sets associated with each ParamEntry intersect at all
+bool ParamEntry::groupOverlap(const ParamEntry &op2) const
+
+{
+  int4 i = 0;
+  int4 j = 0;
+  int4 valThis = groupSet[i];
+  int4 valOther = op2.groupSet[j];
+  while(valThis != valOther) {
+    if (valThis < valOther) {
+      i += 1;
+      if (i >= groupSet.size()) return false;
+      valThis = groupSet[i];
+    }
+    else {
+      j += 1;
+      if (j >= op2.groupSet.size()) return false;
+      valOther = op2.groupSet[j];
+    }
+  }
+  return true;
 }
 
 /// This entry must properly contain the other memory range, and
-/// the entry properties must be compatible.
-/// \param op2 is the other entry to compare with \b this
-/// \return \b true if the other entry is contained
-bool ParamEntry::contains(const ParamEntry &op2) const
+/// the entry properties must be compatible.  A \e join ParamEntry can
+/// subsume another \e join ParamEntry, but we expect the addressbase to be identical.
+/// \param op2 is the given entry to compare with \b this
+/// \return \b true if the given entry is subsumed
+bool ParamEntry::subsumesDefinition(const ParamEntry &op2) const
 
 {
   if ((type!=TYPE_UNKNOWN)&&(op2.type != type)) return false;
@@ -92,6 +173,7 @@ bool ParamEntry::contains(const ParamEntry &op2) const
   return true;
 }
 
+/// We assume a \e join ParamEntry cannot be contained by a single contiguous memory range.
 /// \param addr is the starting address of the potential containing range
 /// \param sz is the number of bytes in the range
 /// \return \b true if the entire ParamEntry fits inside the range
@@ -103,6 +185,38 @@ bool ParamEntry::containedBy(const Address &addr,int4 sz) const
   uintb entryoff = addressbase + size-1;
   uintb rangeoff = addr.getOffset() + sz-1;
   return (entryoff <= rangeoff);
+}
+
+/// If \b this a a \e join, each piece is tested for intersection.
+/// Otherwise, \b this, considered as a single memory, is tested for intersection.
+/// \param addr is the starting address of the given memory range to test against
+/// \param sz is the number of bytes in the given memory range
+/// \return \b true if there is any kind of intersection
+bool ParamEntry::intersects(const Address &addr,int4 sz) const
+
+{
+  uintb rangeend;
+  if (joinrec != (JoinRecord *)0) {
+    rangeend = addr.getOffset() + sz - 1;
+    for(int4 i=0;i<joinrec->numPieces();++i) {
+      const VarnodeData &vdata( joinrec->getPiece(i) );
+      if (addr.getSpace() != vdata.space) continue;
+      uintb vdataend = vdata.offset + vdata.size - 1;
+      if (addr.getOffset() < vdata.offset && rangeend < vdataend)
+	continue;
+      if (addr.getOffset() > vdata.offset && rangeend > vdataend)
+	continue;
+      return true;
+    }
+  }
+  if (spaceid != addr.getSpace()) return false;
+  rangeend = addr.getOffset() + sz - 1;
+  uintb thisend = addressbase + size - 1;
+  if (addr.getOffset() < addressbase && rangeend < thisend)
+    return false;
+  if (addr.getOffset() > addressbase && rangeend > thisend)
+    return false;
+  return true;
 }
 
 /// Check if the given memory range is contained in \b this.
@@ -194,6 +308,28 @@ bool ParamEntry::getContainer(const Address &addr,int4 sz,VarnodeData &res) cons
   return true;
 }
 
+/// Test that \b this, as one or more memory ranges, contains the other ParamEntry's memory range.
+/// A \e join ParamEntry cannot be contained by another entry, but it can contain an entry in one
+/// of its pieces.
+/// \param op2 is the given ParamEntry to test for containment
+/// \return \b true if the given ParamEntry is contained
+bool ParamEntry::contains(const ParamEntry &op2) const
+
+{
+  if (op2.joinrec != (JoinRecord *)0) return false;	// Assume a join entry cannot be contained
+  if (joinrec == (JoinRecord *)0) {
+    Address addr(spaceid,addressbase);
+    return op2.containedBy(addr, size);
+  }
+  for(int4 i=0;i<joinrec->numPieces();++i) {
+    const VarnodeData &vdata(joinrec->getPiece(i));
+    Address addr = vdata.getAddr();
+    if (op2.containedBy(addr,vdata.size))
+      return true;
+  }
+  return false;
+}
+
 /// \brief Calculate the type of \e extension to expect for the given logical value
 ///
 /// Return:
@@ -252,7 +388,7 @@ OpCode ParamEntry::assumedExtension(const Address &addr,int4 sz,VarnodeData &res
 int4 ParamEntry::getSlot(const Address &addr,int4 skip) const
 
 {
-  int4 res = group;
+  int4 res = groupSet[0];
   if (alignment != 0) {
     uintb diff = addr.getOffset() + skip - addressbase;
     int4 baseslot = (int4)diff / alignment;
@@ -262,7 +398,7 @@ int4 ParamEntry::getSlot(const Address &addr,int4 skip) const
       res += baseslot;
   }
   else if (skip != 0) {
-    res += (groupsize-1);
+    res = groupSet.back();
   }
   return res;
 }
@@ -304,25 +440,24 @@ Address ParamEntry::getAddrBySlot(int4 &slotnum,int4 sz) const
       index = numslots;
       index -= slotnum;
       index -= slotsused;
-    } 
+    }
     else
       index = slotnum;
     res = Address(spaceid, addressbase + index * alignment);
     slotnum += slotsused;	// Inform caller of number of slots used
   }
   if (!isLeftJustified())   // Adjust for right justified (big endian)
-    res = res + (spaceused - sz); 
+    res = res + (spaceused - sz);
   return res;
 }
 
-/// \brief Restore the entry from an XML stream
+/// \brief Decode a \<pentry> element into \b this object
 ///
-/// \param el is the root \<pentry> element
-/// \param manage is a manager to resolve address space references
+/// \param decoder is the stream decoder
 /// \param normalstack is \b true if the parameters should be allocated from the front of the range
 /// \param grouped is \b true if \b this will be grouped with other entries
 /// \param curList is the list of ParamEntry defined up to this point
-void ParamEntry::restoreXml(const Element *el,const AddrSpaceManager *manage,bool normalstack,bool grouped,list<ParamEntry> &curList)
+void ParamEntry::decode(Decoder &decoder,bool normalstack,bool grouped,list<ParamEntry> &curList)
 
 {
   flags = 0;
@@ -330,55 +465,49 @@ void ParamEntry::restoreXml(const Element *el,const AddrSpaceManager *manage,boo
   size = minsize = -1;		// Must be filled in
   alignment = 0;		// default
   numslots = 1;
-  groupsize = 1;		// default
-  int4 num = el->getNumAttributes();
-  
-  for(int4 i=0;i<num;++i) {
-    const string &attrname( el->getAttributeName(i) );
-    if (attrname=="minsize") {
-      istringstream i1(el->getAttributeValue(i));
-      i1.unsetf(ios::dec | ios::hex | ios::oct);
-      i1 >> minsize;
+
+  uint4 elemId = decoder.openElement(ELEM_PENTRY);
+  for(;;) {
+    uint4 attribId = decoder.getNextAttributeId();
+    if (attribId == 0) break;
+    if (attribId == ATTRIB_MINSIZE) {
+      minsize = decoder.readSignedInteger();
     }
-    else if (attrname == "size") { // old style
-      istringstream i2(el->getAttributeValue(i));
-      i2.unsetf(ios::dec | ios::hex | ios::oct);
-      i2 >> alignment;
+    else if (attribId == ATTRIB_SIZE) { // old style
+      alignment = decoder.readSignedInteger();
     }
-    else if (attrname == "align") { // new style
-      istringstream i4(el->getAttributeValue(i));
-      i4.unsetf(ios::dec | ios::hex | ios::oct);
-      i4 >> alignment;
+    else if (attribId == ATTRIB_ALIGN) { // new style
+      alignment = decoder.readSignedInteger();
     }
-    else if (attrname == "maxsize") {
-      istringstream i3(el->getAttributeValue(i));
-      i3.unsetf(ios::dec | ios::hex | ios::oct);
-      i3 >> size;
+    else if (attribId == ATTRIB_MAXSIZE) {
+      size = decoder.readSignedInteger();
     }
-    else if (attrname == "metatype")
-      type = string2metatype(el->getAttributeValue(i));
-    else if (attrname == "extension") {
+    else if (attribId == ATTRIB_METATYPE)
+      type = string2metatype(decoder.readString());
+    else if (attribId == ATTRIB_EXTENSION) {
       flags &= ~((uint4)(smallsize_zext | smallsize_sext | smallsize_inttype));
-      if (el->getAttributeValue(i) == "sign")
+      string ext = decoder.readString();
+      if (ext == "sign")
 	flags |= smallsize_sext;
-      else if (el->getAttributeValue(i) == "zero")
+      else if (ext == "zero")
 	flags |= smallsize_zext;
-      else if (el->getAttributeValue(i) == "inttype")
+      else if (ext == "inttype")
 	flags |= smallsize_inttype;
-      else if (el->getAttributeValue(i) == "float")
+      else if (ext == "float")
 	flags |= smallsize_floatext;
-      else if (el->getAttributeValue(i) != "none")
+      else if (ext != "none")
 	throw LowlevelError("Bad extension attribute");
     }
     else
-      throw LowlevelError("Unknown ParamEntry attribute: "+attrname);
+      throw LowlevelError("Unknown <pentry> attribute");
   }
   if ((size==-1)||(minsize==-1))
     throw LowlevelError("ParamEntry not fully specified");
   if (alignment == size)
     alignment = 0;
   Address addr;
-  addr = Address::restoreXml( *el->getChildren().begin(),manage);
+  addr = Address::decode(decoder);
+  decoder.closeElement(elemId);
   spaceid = addr.getSpace();
   addressbase = addr.getOffset();
   if (alignment != 0) {
@@ -402,54 +531,7 @@ void ParamEntry::restoreXml(const Element *el,const AddrSpaceManager *manage,boo
   if (grouped)
     flags |= is_grouped;
   resolveJoin(curList);
-}
-
-/// \brief Check if \b this entry represents a \e joined parameter and requires extra scrutiny
-///
-/// Return value parameter lists allow overlapping entries if one of the overlapping entries
-/// is a \e joined parameter.  In this case the return value recovery logic needs to know
-/// what portion(s) of the joined parameter are overlapped. This method sets flags on \b this
-/// to indicate the overlap.
-/// \param entry is the full parameter list to check for overlaps with \b this
-void ParamEntry::extraChecks(list<ParamEntry> &entry)
-
-{
-  if (joinrec == (JoinRecord *)0) return;		// Nothing to do if not multiprecision
-  if (joinrec->numPieces() != 2) return;
-  const VarnodeData &highPiece(joinrec->getPiece(0));
-  bool seenOnce = false;
-  list<ParamEntry>::const_iterator iter;
-  for(iter=entry.begin();iter!=entry.end();++iter) {	// Search for high piece, used as whole/low in another entry
-    AddrSpace *spc = (*iter).getSpace();
-    uintb off = (*iter).getBase();
-    int4 sz = (*iter).getSize();
-    if ((highPiece.offset == off)&&(highPiece.space == spc)&&(highPiece.size == sz)) {
-      if (seenOnce) throw LowlevelError("Extra check hits twice");
-      seenOnce = true;
-      flags |= extracheck_low;				// If found, we must do extra checks on the low
-    }
-  }
-  if (!seenOnce)
-    flags |= extracheck_high;				// The default is to do extra checks on the high
-}
-
-/// If the storage is in the \e join space, we count the number of join pieces that overlap something
-/// in the given list of entries.
-/// \param curList is the list of entries to check
-/// \return the number of overlapping pieces
-int4 ParamEntry::countJoinOverlap(const list<ParamEntry> &curList) const
-
-{
-  if (joinrec == (JoinRecord *)0)
-    return 0;
-
-  int count = 0;
-  for (int4 i=0;i<joinrec->numPieces();++i) {
-    const ParamEntry *match = findEntryByStorage(curList, joinrec->getPiece(i));
-    if (match != (const ParamEntry *)0)
-      count += 1;
-  }
-  return count;
+  resolveOverlap(curList);
 }
 
 /// Entries within a group must be distinguishable by size or by type.
@@ -479,7 +561,7 @@ ParamListStandard::ParamListStandard(const ParamListStandard &op2)
   maxdelay = op2.maxdelay;
   pointermax = op2.pointermax;
   thisbeforeret = op2.thisbeforeret;
-  resourceTwoStart = op2.resourceTwoStart;
+  resourceStart = op2.resourceStart;
   populateResolver();
 }
 
@@ -523,33 +605,38 @@ int4 ParamListStandard::characterizeAsParam(const Address &loc,int4 size) const
 {
   int4 index = loc.getSpace()->getIndex();
   if (index >= resolverMap.size())
-    return 0;
+    return ParamEntry::no_containment;
   ParamEntryResolver *resolver = resolverMap[index];
   if (resolver == (ParamEntryResolver *)0)
-    return 0;
+    return ParamEntry::no_containment;
   pair<ParamEntryResolver::const_iterator,ParamEntryResolver::const_iterator> iterpair;
   iterpair = resolver->find(loc.getOffset());
-  int4 res = 0;
+  bool resContains = false;
+  bool resContainedBy = false;
   while(iterpair.first != iterpair.second) {
     const ParamEntry *testEntry = (*iterpair.first).getParamEntry();
-    if (testEntry->getMinSize() <= size && testEntry->justifiedContain(loc, size)==0)
-      return 1;
+    int4 off = testEntry->justifiedContain(loc, size);
+    if (off == 0)
+      return ParamEntry::contains_justified;
+    else if (off > 0)
+      resContains = true;
     if (testEntry->isExclusion() && testEntry->containedBy(loc, size))
-      res = 2;
+      resContainedBy = true;
     ++iterpair.first;
   }
-  if (res != 2 && iterpair.first != resolver->end()) {
+  if (resContains) return ParamEntry::contains_unjustified;
+  if (resContainedBy) return ParamEntry::contained_by;
+  if (iterpair.first != resolver->end()) {
     iterpair.second = resolver->find_end(loc.getOffset() + (size-1));
     while(iterpair.first != iterpair.second) {
       const ParamEntry *testEntry = (*iterpair.first).getParamEntry();
       if (testEntry->isExclusion() && testEntry->containedBy(loc, size)) {
-	res = 2;
-	break;
+	return ParamEntry::contained_by;
       }
       ++iterpair.first;
     }
   }
-  return res;
+  return ParamEntry::no_containment;
 }
 
 /// Given the next data-type and the status of previously allocated slots,
@@ -567,16 +654,15 @@ Address ParamListStandard::assignAddress(const Datatype *tp,vector<int4> &status
     const ParamEntry &curEntry( *iter );
     int4 grp = curEntry.getGroup();
     if (status[grp]<0) continue;
-    if ((curEntry.getType() != TYPE_UNKNOWN)&&
-	tp->getMetatype() != curEntry.getType())
+    if ((curEntry.getType() != TYPE_UNKNOWN) && tp->getMetatype() != curEntry.getType())
       continue;			// Wrong type
 
     Address res = curEntry.getAddrBySlot(status[grp],tp->getSize());
     if (res.isInvalid()) continue; // If -tp- doesn't fit an invalid address is returned
     if (curEntry.isExclusion()) {
-      int4 maxgrp = grp + curEntry.getGroupSize();
-      for(int4 j=grp;j<maxgrp;++j) // For an exclusion entry
-	status[j] = -1;		// some number of groups are taken up
+      const vector<int4> &groupSet(curEntry.getAllGroups());
+      for(int4 j=0;j<groupSet.size();++j) 	// For an exclusion entry
+	status[groupSet[j]] = -1;		// some number of groups are taken up
     }
     return res;
   }
@@ -607,13 +693,42 @@ void ParamListStandard::assignMap(const vector<Datatype *> &proto,TypeFactory &t
       res.back().type = pointertp;
       res.back().flags = ParameterPieces::indirectstorage;
     }
-    else
+    else {
       res.back().addr = assignAddress(proto[i],status);
+      res.back().type = proto[i];
+      res.back().flags = 0;
+    }
     if (res.back().addr.isInvalid())
       throw ParamUnassignedError("Cannot assign parameter address for " + proto[i]->getName());
-    res.back().type = proto[i];
-    res.back().flags = 0;
   }
+}
+
+/// From among the ParamEntrys matching the given \e group, return the one that best matches
+/// the given \e metatype attribute. If there are no ParamEntrys in the group, null is returned.
+/// \param grp is the given \e group number
+/// \param prefType is the preferred \e metatype attribute to match
+const ParamEntry *ParamListStandard::selectUnreferenceEntry(int4 grp,type_metatype prefType) const
+
+{
+  int4 bestScore = -1;
+  const ParamEntry *bestEntry = (const ParamEntry *)0;
+  list<ParamEntry>::const_iterator iter;
+  for(iter=entry.begin();iter!=entry.end();++iter) {
+    const ParamEntry *curEntry = &(*iter);
+    if (curEntry->getGroup() != grp) continue;
+    int4 curScore;
+    if (curEntry->getType() == prefType)
+      curScore = 2;
+    else if (prefType == TYPE_UNKNOWN)
+      curScore = 1;
+    else
+      curScore = 0;
+    if (curScore > bestScore) {
+      bestScore = curScore;
+      bestEntry = curEntry;
+    }
+  }
+  return bestEntry;
 }
 
 /// Given a set of \b trials (putative Varnode parameters) as ParamTrial objects,
@@ -625,8 +740,8 @@ void ParamListStandard::buildTrialMap(ParamActive *active) const
 
 {
   vector<const ParamEntry *> hitlist; // List of groups for which we have a representative
-  bool seenfloattrial = false;
-  bool seeninttrial = false;
+  int4 floatCount = 0;
+  int4 intCount = 0;
 
   for(int4 i=0;i<active->getNumTrials();++i) {
     ParamTrial &paramtrial(active->getTrial(i));
@@ -638,10 +753,12 @@ void ParamListStandard::buildTrialMap(ParamActive *active) const
     else {
       paramtrial.setEntry( entrySlot, 0 ); // Keep track of entry recovered for this trial
 
-      if (entrySlot->getType() == TYPE_FLOAT)
-	seenfloattrial = true;
-      else
-	seeninttrial = true;
+      if (paramtrial.isActive()) {
+	if (entrySlot->getType() == TYPE_FLOAT)
+	  floatCount += 1;
+	else
+	  intCount += 1;
+      }
 
       // Make sure we list that the entries group is marked
       int4 grp = entrySlot->getGroup();
@@ -653,22 +770,16 @@ void ParamListStandard::buildTrialMap(ParamActive *active) const
     }
   }
 
-  // Created unreferenced (unref) ParamTrial for any group that we don't have a representive for
+  // Created unreferenced (unref) ParamTrial for any group that we don't have a representative for
   // if that group occurs before one where we do have a representative
 
   for(int4 i=0;i<hitlist.size();++i) {
     const ParamEntry *curentry = hitlist[i];
-    
+
     if (curentry == (const ParamEntry *)0) {
-      list<ParamEntry>::const_iterator iter;
-      for(iter=entry.begin();iter!=entry.end();++iter) {
-	curentry = &(*iter);
-	if (curentry->getGroup() == i) break; // Find first entry of the missing group
-      }
-      if ((!seenfloattrial)&&(curentry->getType()==TYPE_FLOAT))
-	continue;		// Don't fill in unreferenced floats if we haven't seen any floats
-      if ((!seeninttrial)&&(curentry->getType()!=TYPE_FLOAT))
-	continue;		// Don't fill in unreferenced int if all we have seen is floats
+      curentry = selectUnreferenceEntry(i, (floatCount > intCount) ? TYPE_FLOAT : TYPE_UNKNOWN);
+      if (curentry == (const ParamEntry *)0)
+	continue;
       int4 sz = curentry->isExclusion() ? curentry->getSize() : curentry->getAlign();
       int4 nextslot = 0;
       Address addr = curentry->getAddrBySlot(nextslot,sz);
@@ -691,7 +802,7 @@ void ParamListStandard::buildTrialMap(ParamActive *active) const
 	  slot = endslot;
 	  endslot = tmp;
 	}
-	
+
 	while(slotlist.size() <= endslot)
 	  slotlist.push_back(0);
 	while(slot<=endslot) {
@@ -715,65 +826,127 @@ void ParamListStandard::buildTrialMap(ParamActive *active) const
   active->sortTrials();
 }
 
-/// \brief Calculate the range of trials in each of the two resource sections
+/// \brief Calculate the range of trials in each resource sections
 ///
 /// The trials must already be mapped, which should put them in group order.  The sections
-/// split at the group given by \b resourceTwoStart.  We pass back the range of trial indices
-/// for each section.  If \b resourceTwoStart is 0, then there is really only one section, and
-/// the empty range [0,0] is passed back for the second section.
+/// split at the groups given by \b resourceStart.  We pass back the starting index for
+/// each range of trials.
 /// \param active is the given set of parameter trials
-/// \param oneStart will pass back the index of the first trial in the first section
-/// \param oneStop will pass back the index (+1) of the last trial in the first section
-/// \param twoStart will pass back the index of the first trial in the second section
-/// \param twoStop will pass back the index (+1) of the last trial in the second section
-void ParamListStandard::separateSections(ParamActive *active,int4 &oneStart,int4 &oneStop,int4 &twoStart,int4 &twoStop) const
+/// \param trialStart will hold the starting index for each range of trials
+void ParamListStandard::separateSections(ParamActive *active,vector<int4> &trialStart) const
 
 {
   int4 numtrials = active->getNumTrials();
-  if (resourceTwoStart == 0) {
-    // Only one section
-    oneStart = 0;
-    oneStop = numtrials;
-    twoStart = 0;
-    twoStop = 0;
-    return;
-  }
-  int4 i=0;
-  for(;i<numtrials;++i) {
-    ParamTrial &curtrial(active->getTrial(i));
+  int4 currentTrial = 0;
+  int4 nextGroup = resourceStart[1];
+  int4 nextSection = 2;
+  trialStart.push_back(currentTrial);
+  for(;currentTrial<numtrials;++currentTrial) {
+    ParamTrial &curtrial(active->getTrial(currentTrial));
     if (curtrial.getEntry()==(const ParamEntry *)0) continue;
-    if (curtrial.getEntry()->getGroup() >= resourceTwoStart) break;
+    if (curtrial.getEntry()->getGroup() >= nextGroup) {
+      if (nextSection > resourceStart.size())
+	throw LowlevelError("Missing next resource start");
+      nextGroup = resourceStart[nextSection];
+      nextSection += 1;
+      trialStart.push_back(currentTrial);
+    }
   }
-  oneStart = 0;
-  oneStop = i;
-  twoStart = i;
-  twoStop = numtrials;
+  trialStart.push_back(numtrials);
+}
+
+/// \brief Mark all the trials within the indicated groups as \e not \e used, except for one specified index
+///
+/// Only one trial within an exclusion group can have active use, mark all others as unused.
+/// \param active is the set of trials, which must be sorted on group
+/// \param activeTrial is the index of the trial whose groups are to be considered active
+/// \param trialStart is the index of the first trial to mark
+void ParamListStandard::markGroupNoUse(ParamActive *active,int4 activeTrial,int4 trialStart)
+
+{
+  int4 numTrials = active->getNumTrials();
+  const ParamEntry *activeEntry = active->getTrial(activeTrial).getEntry();
+  for(int4 i=trialStart;i<numTrials;++i) {		// Mark entries intersecting the group set as definitely not used
+    if (i == activeTrial) continue;			// The trial NOT to mark
+    ParamTrial &othertrial(active->getTrial(i));
+    if (othertrial.isDefinitelyNotUsed()) continue;
+    if (!othertrial.getEntry()->groupOverlap(*activeEntry)) break;
+    othertrial.markNoUse();
+  }
+}
+
+/// \brief From among multiple \e inactive trials, select the most likely to be active and mark others as not used
+///
+/// There can be at most one \e inactive trial in an exclusion group for the fill algorithms to work.
+/// Score all the trials and pick the one that is the most likely to actually be an active param.
+/// Mark all the others as definitely not used.
+/// \param active is the sorted set of trials
+/// \param group is the group number
+/// \param groupStart is the index of the first trial in the group
+/// \param prefType is a preferred entry to type to use in scoring
+void ParamListStandard::markBestInactive(ParamActive *active,int4 group,int4 groupStart,type_metatype prefType)
+
+{
+  int4 numTrials = active->getNumTrials();
+  int4 bestTrial = -1;
+  int4 bestScore = -1;
+  for(int4 i=groupStart;i<numTrials;++i) {
+    ParamTrial &trial(active->getTrial(i));
+    if (trial.isDefinitelyNotUsed()) continue;
+    const ParamEntry *entry = trial.getEntry();
+    int4 grp = entry->getGroup();
+    if (grp != group) break;
+    if (entry->getAllGroups().size() > 1) continue;	// Covering multiple slots automatically give low score
+    int4 score = 0;
+    if (trial.hasAncestorRealistic()) {
+      score += 5;
+      if (trial.hasAncestorSolid())
+	score += 5;
+    }
+    if (entry->getType() == prefType)
+      score += 1;
+    if (score > bestScore) {
+      bestScore = score;
+      bestTrial = i;
+    }
+  }
+  if (bestTrial >= 0)
+    markGroupNoUse(active, bestTrial, groupStart);
 }
 
 /// \brief Enforce exclusion rules for the given set of parameter trials
 ///
 /// If there are more than one active trials in a single group,
-/// and if that group is an exclusion group, mark all but the first trial to \e inactive.
+/// and if that group is an exclusion group, mark all but the first trial to \e defnouse.
 /// \param active is the set of trials
-void ParamListStandard::forceExclusionGroup(ParamActive *active) const
+void ParamListStandard::forceExclusionGroup(ParamActive *active)
 
 {
-  int4 curupper = -1;
-  bool exclusion = false;
-  int4 numtrials = active->getNumTrials();
-  for(int4 i=0;i<numtrials;++i) {
+  int4 numTrials = active->getNumTrials();
+  int4 curGroup = -1;
+  int4 groupStart = -1;
+  int4 inactiveCount = 0;
+  for(int4 i=0;i<numTrials;++i) {
     ParamTrial &curtrial(active->getTrial(i));
+    if (curtrial.isDefinitelyNotUsed() || !curtrial.getEntry()->isExclusion())
+         continue;
+    int4 grp = curtrial.getEntry()->getGroup();
+    if (grp != curGroup) {
+      if (inactiveCount > 1)
+	markBestInactive(active, curGroup, groupStart, TYPE_UNKNOWN);
+      curGroup = grp;
+      groupStart = i;
+      inactiveCount = 0;
+    }
     if (curtrial.isActive()) {
-      int4 grp = curtrial.getEntry()->getGroup();
-      exclusion = curtrial.getEntry()->isExclusion();
-      if (grp <= curupper) {	// If curtrial's group falls below highest group where we have seen an active
-	if (exclusion)
-	  curtrial.markInactive(); // mark inactive if it is an exclusion group
-      }
-      else
-	curupper = grp + curtrial.getEntry()->getGroupSize() - 1; // This entry covers some number of groups
+      markGroupNoUse(active, i, groupStart);
+    }
+    else {
+      inactiveCount += 1;
     }
   }
+  if (inactiveCount > 1)
+    markBestInactive(active, curGroup, groupStart, TYPE_UNKNOWN);
 }
 
 /// \brief Mark every trial above the first "definitely not used" as \e inactive.
@@ -783,7 +956,7 @@ void ParamListStandard::forceExclusionGroup(ParamActive *active) const
 /// \param active is the set of trials, which must already be ordered
 /// \param start is the index of the first trial in the range to consider
 /// \param stop is the index (+1) of the last trial in the range to consider
-void ParamListStandard::forceNoUse(ParamActive *active, int4 start, int4 stop) const
+void ParamListStandard::forceNoUse(ParamActive *active, int4 start, int4 stop)
 
 {
   bool seendefnouse = false;
@@ -802,9 +975,9 @@ void ParamListStandard::forceNoUse(ParamActive *active, int4 start, int4 stop) c
     }
     else { // First trial in a new group (or next element in same non-exclusion group)
       if (alldefnouse)	   // If all in the last group were defnotused
-	seendefnouse = true;// then force everything afterword to be defnotused
+	seendefnouse = true;// then force everything afterward to be defnotused
       alldefnouse = curtrial.isDefinitelyNotUsed();
-      curgroup = grp + curtrial.getEntry()->getGroupSize() - 1;
+      curgroup = grp;
     }
     if (seendefnouse)
       curtrial.markInactive();
@@ -825,7 +998,7 @@ void ParamListStandard::forceNoUse(ParamActive *active, int4 start, int4 stop) c
 /// \param start is the first index in the range of trials to consider
 /// \param stop is the last index (+1) in the range of trials to consider
 /// \param groupstart is the smallest group id in the particular section
-void ParamListStandard::forceInactiveChain(ParamActive *active,int4 maxchain,int4 start,int4 stop,int4 groupstart) const
+void ParamListStandard::forceInactiveChain(ParamActive *active,int4 maxchain,int4 start,int4 stop,int4 groupstart)
 
 {
   bool seenchain = false;
@@ -833,7 +1006,7 @@ void ParamListStandard::forceInactiveChain(ParamActive *active,int4 maxchain,int
   int4 max = -1;
   for(int4 i=start;i<stop;++i) {
     ParamTrial &trial(active->getTrial(i));
-    if (trial.getEntry() == (const ParamEntry *)0) continue; // Already know not used
+    if (trial.isDefinitelyNotUsed()) continue; // Already know not used
     if (!trial.isActive()) {
       if (trial.isUnref()&&active->isRecoverSubcall()) {
 	// If there is no reference to the trial within the function, the only real possibility
@@ -879,57 +1052,84 @@ void ParamListStandard::calcDelay(void)
   }
 }
 
+/// \brief Internal method for adding a single address range to the ParamEntryResolvers
+///
+/// Specify the contiguous address range, the ParamEntry to map to it, and a position recording
+/// the order in which ranges are added.
+/// \param spc is address space of the memory range
+/// \param first is the starting offset of the memory range
+/// \param last is the ending offset of the memory range
+/// \param paramEntry is the ParamEntry to associate with the memory range
+/// \param position is the ordering position
+void ParamListStandard::addResolverRange(AddrSpace *spc,uintb first,uintb last,ParamEntry *paramEntry,int4 position)
+
+{
+  int4 index = spc->getIndex();
+  while(resolverMap.size() <= index) {
+    resolverMap.push_back((ParamEntryResolver *)0);
+  }
+  ParamEntryResolver *resolver = resolverMap[index];
+  if (resolver == (ParamEntryResolver *)0) {
+    resolver = new ParamEntryResolver();
+    resolverMap[spc->getIndex()] = resolver;
+  }
+  ParamEntryResolver::inittype initData(position,paramEntry);
+  resolver->insert(initData,first,last);
+}
+
 /// Enter all the ParamEntry objects into an interval map (based on address space)
 void ParamListStandard::populateResolver(void)
 
 {
-  int4 maxid = -1;
   list<ParamEntry>::iterator iter;
-  for(iter=entry.begin();iter!=entry.end();++iter) {
-    int4 id = (*iter).getSpace()->getIndex();
-    if (id > maxid)
-      maxid = id;
-  }
-  resolverMap.resize(maxid+1, (ParamEntryResolver *)0);
   int4 position = 0;
   for(iter=entry.begin();iter!=entry.end();++iter) {
     ParamEntry *paramEntry = &(*iter);
-    int4 spaceId = paramEntry->getSpace()->getIndex();
-    ParamEntryResolver *resolver = resolverMap[spaceId];
-    if (resolver == (ParamEntryResolver *)0) {
-      resolver = new ParamEntryResolver();
-      resolverMap[spaceId] = resolver;
+    AddrSpace *spc = paramEntry->getSpace();
+    if (spc->getType() == IPTR_JOIN) {
+      JoinRecord *joinRec = paramEntry->getJoinRecord();
+      for(int4 i=0;i<joinRec->numPieces();++i) {
+	// Individual pieces making up the join are mapped to the ParamEntry
+        const VarnodeData &vData(joinRec->getPiece(i));
+        uintb last = vData.offset + (vData.size - 1);
+        addResolverRange(vData.space,vData.offset,last,paramEntry,position);
+        position += 1;
+      }
     }
-    uintb first = paramEntry->getBase();
-    uintb last = first + (paramEntry->getSize() - 1);
-    ParamEntryResolver::inittype initData(position,paramEntry);
-    position += 1;
-    resolver->insert(initData,first,last);
+    else {
+      uintb first = paramEntry->getBase();
+      uintb last = first + (paramEntry->getSize() - 1);
+      addResolverRange(spc,first,last,paramEntry,position);
+      position += 1;
+    }
   }
 }
 
-/// \brief Read a \<pentry> tag and add it to \b this list
+/// \brief Parse a \<pentry> element and add it to \b this list
 ///
-/// \param el is the \<pentry element
-/// \param manage is manager for parsing address spaces
+/// \param decoder is the stream decoder
 /// \param effectlist holds any passed back effect records
 /// \param groupid is the group to which the new ParamEntry is assigned
 /// \param normalstack is \b true if the parameters should be allocated from the front of the range
 /// \param autokill is \b true if parameters are automatically added to the killedbycall list
 /// \param splitFloat is \b true if floating-point parameters are in their own resource section
 /// \param grouped is \b true if the new ParamEntry is grouped with other entries
-void ParamListStandard::parsePentry(const Element *el,const AddrSpaceManager *manage,vector<EffectRecord> &effectlist,
+void ParamListStandard::parsePentry(Decoder &decoder,vector<EffectRecord> &effectlist,
 				    int4 groupid,bool normalstack,bool autokill,bool splitFloat,bool grouped)
 {
+  type_metatype lastMeta = TYPE_UNION;
+  if (!entry.empty()) {
+    lastMeta = entry.back().isGrouped() ? TYPE_UNKNOWN : entry.back().getType();
+  }
   entry.emplace_back(groupid);
-  entry.back().restoreXml(el,manage,normalstack,grouped,entry);
+  entry.back().decode(decoder,normalstack,grouped,entry);
   if (splitFloat) {
-    if (entry.back().getType() == TYPE_FLOAT) {
-      if (resourceTwoStart >= 0)
-	throw LowlevelError("parameter list floating-point entries must come first");
+    type_metatype currentMeta = grouped ? TYPE_UNKNOWN : entry.back().getType();
+    if (lastMeta != currentMeta) {
+      if (lastMeta > currentMeta)
+	throw LowlevelError("parameter list entries must be ordered by metatype");
+      resourceStart.push_back(groupid);
     }
-    else if (resourceTwoStart < 0)
-      resourceTwoStart = groupid; // First time we have seen an integer slot
   }
   AddrSpace *spc = entry.back().getSpace();
   if (spc->getType() == IPTR_SPACEBASE)
@@ -937,34 +1137,29 @@ void ParamListStandard::parsePentry(const Element *el,const AddrSpaceManager *ma
   else if (autokill)	// If a register parameter AND we automatically generate killedbycall
     effectlist.push_back(EffectRecord(entry.back(),EffectRecord::killedbycall));
 
-  int4 maxgroup = entry.back().getGroup() + entry.back().getGroupSize();
+  int4 maxgroup = entry.back().getAllGroups().back() + 1;
   if (maxgroup > numgroup)
     numgroup = maxgroup;
 }
 
-/// \brief Read a group of \<pentry> tags that are allocated as a group
+/// \brief Parse a sequence of \<pentry> elements that are allocated as a group
 ///
 /// All ParamEntry objects will share the same \b group id.
-/// \param el is the \<pentry element
-/// \param manage is manager for parsing address spaces
+/// \param decoder is the stream decoder
 /// \param effectlist holds any passed back effect records
 /// \param groupid is the group to which all ParamEntry elements are assigned
 /// \param normalstack is \b true if the parameters should be allocated from the front of the range
 /// \param autokill is \b true if parameters are automatically added to the killedbycall list
 /// \param splitFloat is \b true if floating-point parameters are in their own resource section
-void ParamListStandard::parseGroup(const Element *el,const AddrSpaceManager *manage,vector<EffectRecord> &effectlist,
+void ParamListStandard::parseGroup(Decoder &decoder,vector<EffectRecord> &effectlist,
 				   int4 groupid,bool normalstack,bool autokill,bool splitFloat)
 {
-  const List &flist(el->getChildren());
-  List::const_iterator iter = flist.begin();
   int4 basegroup = numgroup;
   ParamEntry *previous1 = (ParamEntry *)0;
   ParamEntry *previous2 = (ParamEntry *)0;
-  for(;iter!=flist.end();++iter) {
-    const Element *subel = *iter;
-    if (subel->getName() != "pentry")
-      throw LowlevelError("Expected <pentry> child of <group>: " + subel->getName());
-    parsePentry(subel, manage, effectlist, basegroup, normalstack, autokill, splitFloat, true);
+  uint4 elemId = decoder.openElement(ELEM_GROUP);
+  while(decoder.peekElement() != 0) {
+    parsePentry(decoder, effectlist, basegroup, normalstack, autokill, splitFloat, true);
     ParamEntry &pentry( entry.back() );
     if (pentry.getSpace()->getType() == IPTR_JOIN)
       throw LowlevelError("<pentry> in the join space not allowed in <group> tag");
@@ -976,22 +1171,30 @@ void ParamListStandard::parseGroup(const Element *el,const AddrSpaceManager *man
     previous2 = previous1;
     previous1 = &pentry;
   }
+  decoder.closeElement(elemId);
 }
 
 void ParamListStandard::fillinMap(ParamActive *active) const
 
 {
   if (active->getNumTrials() == 0) return; // No trials to check
+  if (entry.empty())
+    throw LowlevelError("Cannot derive parameter storage for prototype model without parameter entries");
 
   buildTrialMap(active); // Associate varnodes with sorted list of parameter locations
 
   forceExclusionGroup(active);
-  int4 oneStart,oneStop,twoStart,twoStop;
-  separateSections(active,oneStart,oneStop,twoStart,twoStop);
-  forceNoUse(active,oneStart,oneStop);
-  forceNoUse(active,twoStart,twoStop);	    // Definitely not used -- overrides active
-  forceInactiveChain(active,2,oneStart,oneStop,0);	// Chains of inactivity override later actives
-  forceInactiveChain(active,2,twoStart,twoStop,resourceTwoStart);
+  vector<int4> trialStart;
+  separateSections(active,trialStart);
+  int4 numSection = trialStart.size() - 1;
+  for(int4 i=0;i<numSection;++i) {
+    // Definitely not used -- overrides active
+    forceNoUse(active,trialStart[i],trialStart[i+1]);
+  }
+  for(int4 i=0;i<numSection;++i) {
+    // Chains of inactivity override later actives
+    forceInactiveChain(active,2,trialStart[i],trialStart[i+1],resourceStart[i]);
+  }
 
   // Mark every active trial as used
   for(int4 i=0;i<active->getNumTrials();++i) {
@@ -1053,7 +1256,7 @@ bool ParamListStandard::possibleParamWithSlot(const Address &loc,int4 size,int4 
   if (entryNum == (const ParamEntry *)0) return false;
   slot = entryNum->getSlot(loc,0);
   if (entryNum->isExclusion()) {
-    slotsize = entryNum->getGroupSize();
+    slotsize = entryNum->getAllGroups().size();
   }
   else {
     slotsize = ((size-1) / entryNum->getAlign()) + 1;
@@ -1137,8 +1340,7 @@ void ParamListStandard::getRangeList(AddrSpace *spc,RangeList &res) const
   }
 }
 
-void ParamListStandard::restoreXml(const Element *el,const AddrSpaceManager *manage,
-				   vector<EffectRecord> &effectlist,bool normalstack)
+void ParamListStandard::decode(Decoder &decoder,vector<EffectRecord> &effectlist,bool normalstack)
 
 {
   numgroup = 0;
@@ -1147,44 +1349,35 @@ void ParamListStandard::restoreXml(const Element *el,const AddrSpaceManager *man
   thisbeforeret = false;
   bool splitFloat = true;		// True if we should split FLOAT entries into their own resource section
   bool autokilledbycall = false;
-  for(int4 i=0;i<el->getNumAttributes();++i) {
-    const string &attrname( el->getAttributeName(i) );
-    if (attrname == "pointermax") {
-      istringstream i1(el->getAttributeValue(i));
-      i1.unsetf(ios::dec | ios::hex | ios::oct);
-      i1 >> pointermax;
+  uint4 elemId = decoder.openElement();
+  for(;;) {
+    uint4 attribId = decoder.getNextAttributeId();
+    if (attribId == 0) break;
+    if (attribId == ATTRIB_POINTERMAX) {
+      pointermax = decoder.readSignedInteger();
     }
-    else if (attrname == "thisbeforeretpointer") {
-      thisbeforeret = xml_readbool( el->getAttributeValue(i) );
+    else if (attribId == ATTRIB_THISBEFORERETPOINTER) {
+      thisbeforeret = decoder.readBool();
     }
-    else if (attrname == "killedbycall") {
-      autokilledbycall = xml_readbool( el->getAttributeValue(i) );
+    else if (attribId == ATTRIB_KILLEDBYCALL) {
+      autokilledbycall = decoder.readBool();
     }
-    else if (attrname == "separatefloat") {
-      splitFloat = xml_readbool( el->getAttributeValue(i) );
-    }
-  }
-  resourceTwoStart = splitFloat ? -1 : 0;
-  const List &flist(el->getChildren());
-  List::const_iterator fiter;
-  for(fiter=flist.begin();fiter!=flist.end();++fiter) {
-    const Element *subel = *fiter;
-    if (subel->getName() == "pentry") {
-      parsePentry(subel, manage, effectlist, numgroup, normalstack, autokilledbycall, splitFloat, false);
-    }
-    else if (subel->getName() == "group") {
-      parseGroup(subel, manage, effectlist, numgroup, normalstack, autokilledbycall, splitFloat);
+    else if (attribId == ATTRIB_SEPARATEFLOAT) {
+      splitFloat = decoder.readBool();
     }
   }
-  // Check that any pentry tags with join storage don't overlap following tags
-  for (list<ParamEntry>::const_iterator eiter=entry.begin();eiter!=entry.end();++eiter) {
-    const ParamEntry &curEntry( *eiter );
-    if (curEntry.isNonOverlappingJoin()) {
-      if (curEntry.countJoinOverlap(entry) != 1) {
-	throw LowlevelError("pentry tag must be listed after all its overlaps");
-      }
+  for(;;) {
+    uint4 subId = decoder.peekElement();
+    if (subId == 0) break;
+    if (subId == ELEM_PENTRY) {
+      parsePentry(decoder, effectlist, numgroup, normalstack, autokilledbycall, splitFloat, false);
+    }
+    else if (subId == ELEM_GROUP) {
+      parseGroup(decoder, effectlist, numgroup, normalstack, autokilledbycall, splitFloat);
     }
   }
+  decoder.closeElement(elemId);
+  resourceStart.push_back(numgroup);
   calcDelay();
   populateResolver();
 }
@@ -1302,17 +1495,6 @@ bool ParamListRegisterOut::possibleParam(const Address &loc,int4 size) const
   return false;
 }
 
-void ParamListRegisterOut::restoreXml(const Element *el,const AddrSpaceManager *manage,
-				      vector<EffectRecord> &effectlist,bool normalstack)
-{
-  ParamListStandard::restoreXml(el,manage,effectlist,normalstack);
-  list<ParamEntry>::iterator iter;
-  for(iter=entry.begin();iter!=entry.end();++iter) {
-    ParamEntry &curEntry(*iter);
-    curEntry.extraChecks(entry);
-  }
-}
-
 ParamList *ParamListRegisterOut::clone(void) const
 
 {
@@ -1379,10 +1561,10 @@ void ParamListStandardOut::assignMap(const vector<Datatype *> &proto,TypeFactory
   }
 }
 
-void ParamListStandardOut::restoreXml(const Element *el,const AddrSpaceManager *manage,vector<EffectRecord> &effectlist,bool normalstack)
+void ParamListStandardOut::decode(Decoder &decoder,vector<EffectRecord> &effectlist,bool normalstack)
 
 {
-  ParamListRegisterOut::restoreXml(el,manage,effectlist,normalstack);
+  ParamListRegisterOut::decode(decoder,effectlist,normalstack);
   // Check for double precision entries
   list<ParamEntry>::iterator iter;
   ParamEntry *previous1 = (ParamEntry *)0;
@@ -1427,11 +1609,11 @@ void ParamListMerged::foldIn(const ParamListStandard &op2)
     int4 typeint = 0;
     list<ParamEntry>::iterator iter;
     for(iter=entry.begin();iter!=entry.end();++iter) {
-      if ((*iter).contains(opentry)) {
+      if ((*iter).subsumesDefinition(opentry)) {
 	typeint = 2;
 	break;
       }
-      if (opentry.contains( *iter )) {
+      if (opentry.subsumesDefinition( *iter )) {
 	typeint = 1;
 	break;
       }
@@ -1532,6 +1714,25 @@ bool ParamTrial::operator<(const ParamTrial &b) const
   return (size < b.size);
 }
 
+/// Sort by fixed position then by ParamTrial::operator<
+/// \param a trial
+/// \param b trial
+/// \return \b true if \b a should be ordered before \b b
+bool ParamTrial::fixedPositionCompare(const ParamTrial &a, const ParamTrial &b)
+
+{
+	if (a.fixedPosition == -1 && b.fixedPosition == -1){
+		return a < b;
+	}
+	if (a.fixedPosition == -1){
+		return false;
+	}
+	if (b.fixedPosition == -1){
+		return true;
+	}
+	return a.fixedPosition < b.fixedPosition;
+}
+
 /// \param recoversub selects whether a sub-function or the active function is being tested
 ParamActive::ParamActive(bool recoversub)
 
@@ -1613,7 +1814,7 @@ void ParamActive::deleteUnusedTrials(void)
 {
   vector<ParamTrial> newtrials;
   int4 slot = 1;
-  
+
   for(int4 i=0;i<trial.size();++i) {
     ParamTrial &curtrial(trial[i]);
     if (curtrial.isUsed()) {
@@ -1635,7 +1836,7 @@ void ParamActive::splitTrial(int4 i,int4 sz)
     throw LowlevelError("Cannot split parameter when the placeholder has not been recovered");
   vector<ParamTrial> newtrials;
   int4 slot = trial[i].getSlot();
-  
+
   for(int4 j=0;j<i;++j) {
     newtrials.push_back(trial[j]);
     int4 oldslot = newtrials.back().getSlot();
@@ -1719,36 +1920,32 @@ FspecSpace::FspecSpace(AddrSpaceManager *m,const Translate *t,int4 ind)
     setFlags(big_endian);
 }
 
-void FspecSpace::saveXmlAttributes(ostream &s,uintb offset) const
+void FspecSpace::encodeAttributes(Encoder &encoder,uintb offset) const
 
 {
   FuncCallSpecs *fc = (FuncCallSpecs *)(uintp)offset;
 
   if (fc->getEntryAddress().isInvalid())
-    s << " space=\"fspec\"";
+    encoder.writeString(ATTRIB_SPACE, "fspec");
   else {
     AddrSpace *id = fc->getEntryAddress().getSpace();
-    a_v(s,"space",id->getName()); // Just append the proper attributes
-    s << ' ' << "offset=\"";
-    printOffset(s,fc->getEntryAddress().getOffset());
-    s << "\"";
+    encoder.writeSpace(ATTRIB_SPACE, id);
+    encoder.writeUnsignedInteger(ATTRIB_OFFSET, fc->getEntryAddress().getOffset());
   }
 }
 
-void FspecSpace::saveXmlAttributes(ostream &s,uintb offset,int4 size) const
+void FspecSpace::encodeAttributes(Encoder &encoder,uintb offset,int4 size) const
 
 {
   FuncCallSpecs *fc = (FuncCallSpecs *)(uintp)offset;
 
   if (fc->getEntryAddress().isInvalid())
-    s << " space=\"fspec\"";
+    encoder.writeString(ATTRIB_SPACE, "fspec");
   else {
     AddrSpace *id = fc->getEntryAddress().getSpace();
-    a_v(s,"space",id->getName()); // Just append the proper attributes
-    s << ' ' << "offset=\"";
-    printOffset(s,fc->getEntryAddress().getOffset());
-    s << "\"";
-    a_v_i(s,"size",size);
+    encoder.writeSpace(ATTRIB_SPACE, id);
+    encoder.writeUnsignedInteger(ATTRIB_OFFSET, fc->getEntryAddress().getOffset());
+    encoder.writeSignedInteger(ATTRIB_SIZE, size);
   }
 }
 
@@ -1768,13 +1965,13 @@ void FspecSpace::printRaw(ostream &s,uintb offset) const
 void FspecSpace::saveXml(ostream &s) const
 
 {
-  throw LowlevelError("Should never save fspec space to XML");
+  throw LowlevelError("Should never encode fspec space to stream");
 }
 
-void FspecSpace::restoreXml(const Element *el)
+void FspecSpace::decode(Decoder &decoder)
 
 {
-  throw LowlevelError("Should never restore fspec space from XML");
+  throw LowlevelError("Should never decode fspec space from stream");
 }
 
 /// The type is set to \e unknown_effect
@@ -1809,27 +2006,26 @@ EffectRecord::EffectRecord(const VarnodeData &data,uint4 t)
   type = t;
 }
 
-/// Writes just an \<addr> tag.  The effect type is indicated by the parent tag.
-/// \param s is the output stream
-void EffectRecord::saveXml(ostream &s) const
+/// Encode just an \<addr> element.  The effect type is indicated by the parent element.
+/// \param encoder is the stream encoder
+void EffectRecord::encode(Encoder &encoder) const
 
 {
   Address addr(range.space,range.offset);
   if ((type == unaffected)||(type == killedbycall)||(type == return_address))
-    addr.saveXml(s,range.size);
+    addr.encode(encoder,range.size);
   else
     throw LowlevelError("Bad EffectRecord type");
 }
 
-/// Reads an \<addr> tag to get the memory range. The effect type is inherited from the parent.
+/// Parse an \<addr> element to get the memory range. The effect type is inherited from the parent.
 /// \param grouptype is the effect inherited from the parent
-/// \param el is address element
-/// \param manage is a manager to resolve address space references
-void EffectRecord::restoreXml(uint4 grouptype,const Element *el,const AddrSpaceManager *manage)
+/// \param decoder is the stream decoder
+void EffectRecord::decode(uint4 grouptype,Decoder &decoder)
 
 {
   type = grouptype;
-  range.restoreXml(el,manage);
+  range.decode(decoder);
 }
 
 void ProtoModel::defaultLocalRange(void)
@@ -1921,6 +2117,7 @@ ProtoModel::ProtoModel(Architecture *g)
   stackgrowsnegative = true;	// Normal stack parameter ordering
   hasThis = false;
   isConstruct = false;
+  isPrinted = true;
   defaultLocalRange();
   defaultParamRange();
 }
@@ -1933,6 +2130,7 @@ ProtoModel::ProtoModel(const string &nm,const ProtoModel &op2)
 {
   glb = op2.glb;
   name = nm;
+  isPrinted = true;		// Don't inherit. Always print unless setPrintInDecl called explicitly
   extrapop = op2.extrapop;
   if (op2.input != (ParamList *)0)
     input = op2.input->clone();
@@ -1945,7 +2143,7 @@ ProtoModel::ProtoModel(const string &nm,const ProtoModel &op2)
 
   effectlist = op2.effectlist;
   likelytrash = op2.likelytrash;
-  
+
   injectUponEntry = op2.injectUponEntry;
   injectUponReturn = op2.injectUponReturn;
   localrange = op2.localrange;
@@ -2101,13 +2299,11 @@ uint4 ProtoModel::hasEffect(const Address &addr,int4 size) const
   return lookupEffect(effectlist,addr,size);
 }
 
-/// Read in details about \b this model from a \<prototype> tag
-/// \param el is the \<prototype> element
-void ProtoModel::restoreXml(const Element *el)
+/// Parse details about \b this model from a \<prototype> element
+/// \param decoder is the stream decoder
+void ProtoModel::decode(Decoder &decoder)
 
 {
-  int4 numattr = el->getNumAttributes();
-
   bool sawlocalrange = false;
   bool sawparamrange = false;
   bool sawretaddr = false;
@@ -2121,36 +2317,34 @@ void ProtoModel::restoreXml(const Element *el)
   extrapop = -300;
   hasThis = false;
   isConstruct = false;
+  isPrinted = true;
   effectlist.clear();
   injectUponEntry = -1;
   injectUponReturn = -1;
   likelytrash.clear();
-  for(int4 i=0;i<numattr;++i) {
-    if (el->getAttributeName(i) == "name")
-      name = el->getAttributeValue(i);
-    else if (el->getAttributeName(i) == "extrapop") {
-      if (el->getAttributeValue(i) == "unknown")
-	extrapop = extrapop_unknown;
-      else {
-	istringstream s(el->getAttributeValue(i));
-	s.unsetf(ios::dec | ios::hex | ios::oct);
-	s >> extrapop;
-      }
+  uint4 elemId = decoder.openElement(ELEM_PROTOTYPE);
+  for(;;) {
+    uint4 attribId = decoder.getNextAttributeId();
+    if (attribId == 0) break;
+    if (attribId == ATTRIB_NAME)
+      name = decoder.readString();
+    else if (attribId == ATTRIB_EXTRAPOP) {
+      extrapop = decoder.readSignedIntegerExpectString("unknown", extrapop_unknown);
     }
-    else if (el->getAttributeName(i) == "stackshift") {
+    else if (attribId == ATTRIB_STACKSHIFT) {
       // Allow this attribute for backward compatibility
     }
-    else if (el->getAttributeName(i) == "strategy") {
-      strategystring = el->getAttributeValue(i);
+    else if (attribId == ATTRIB_STRATEGY) {
+      strategystring = decoder.readString();
     }
-    else if (el->getAttributeName(i) == "hasthis") {
-      hasThis = xml_readbool(el->getAttributeValue(i));
+    else if (attribId == ATTRIB_HASTHIS) {
+      hasThis = decoder.readBool();
     }
-    else if (el->getAttributeName(i) == "constructor") {
-      isConstruct = xml_readbool(el->getAttributeValue(i));
+    else if (attribId == ATTRIB_CONSTRUCTOR) {
+      isConstruct = decoder.readBool();
     }
     else
-      throw LowlevelError("Unknown prototype attribute: "+el->getAttributeName(i));
+      throw LowlevelError("Unknown prototype attribute");
   }
   if (name == "__thiscall")
     hasThis = true;
@@ -2158,91 +2352,86 @@ void ProtoModel::restoreXml(const Element *el)
     throw LowlevelError("Missing prototype attributes");
 
   buildParamList(strategystring); // Allocate input and output ParamLists
-  const List &list(el->getChildren());
-  List::const_iterator iter;
-  for(iter=list.begin();iter!=list.end();++iter) {
-    const Element *subnode = *iter;
-    if (subnode->getName() == "input") {
-      input->restoreXml(subnode,glb,effectlist,stackgrowsnegative);
+  for(;;) {
+    uint4 subId = decoder.peekElement();
+    if (subId == 0) break;
+    if (subId == ELEM_INPUT) {
+      input->decode(decoder,effectlist,stackgrowsnegative);
       if (stackspc != (AddrSpace *)0) {
 	input->getRangeList(stackspc,paramrange);
 	if (!paramrange.empty())
 	  sawparamrange = true;
       }
     }
-    else if (subnode->getName() == "output") {
-      output->restoreXml(subnode,glb,effectlist,stackgrowsnegative);
+    else if (subId == ELEM_OUTPUT) {
+      output->decode(decoder,effectlist,stackgrowsnegative);
     }
-    else if (subnode->getName() == "unaffected") {
-      const List &flist(subnode->getChildren());
-      List::const_iterator fiter;
-      for(fiter=flist.begin();fiter!=flist.end();++fiter) {
+    else if (subId == ELEM_UNAFFECTED) {
+      decoder.openElement();
+      while(decoder.peekElement() != 0) {
 	effectlist.emplace_back();
-	effectlist.back().restoreXml(EffectRecord::unaffected,*fiter,glb);
+	effectlist.back().decode(EffectRecord::unaffected,decoder);
       }
+      decoder.closeElement(subId);
     }
-    else if (subnode->getName() == "killedbycall") {
-      const List &flist(subnode->getChildren());
-      List::const_iterator fiter;
-      for(fiter=flist.begin();fiter!=flist.end();++fiter) {
+    else if (subId == ELEM_KILLEDBYCALL) {
+      decoder.openElement();
+      while(decoder.peekElement() != 0) {
 	effectlist.emplace_back();
-	effectlist.back().restoreXml(EffectRecord::killedbycall,*fiter,glb);
-      }	
-    }
-    else if (subnode->getName() == "returnaddress") {
-      const List &flist(subnode->getChildren());
-      List::const_iterator fiter;
-      for(fiter=flist.begin();fiter!=flist.end();++fiter) {
-	effectlist.emplace_back();
-	effectlist.back().restoreXml(EffectRecord::return_address,*fiter,glb);
+	effectlist.back().decode(EffectRecord::killedbycall,decoder);
       }
+      decoder.closeElement(subId);
+    }
+    else if (subId == ELEM_RETURNADDRESS) {
+      decoder.openElement();
+      while(decoder.peekElement() != 0) {
+	effectlist.emplace_back();
+	effectlist.back().decode(EffectRecord::return_address,decoder);
+      }
+      decoder.closeElement(subId);
       sawretaddr = true;
     }
-    else if (subnode->getName() == "localrange") {
+    else if (subId == ELEM_LOCALRANGE) {
       sawlocalrange = true;
-      const List &sublist(subnode->getChildren());
-      List::const_iterator subiter;
-      for(subiter=sublist.begin();subiter!=sublist.end();++subiter) {
+      decoder.openElement();
+      while(decoder.peekElement() != 0) {
         Range range;
-        range.restoreXml(*subiter,glb);
+        range.decode(decoder);
         localrange.insertRange(range.getSpace(),range.getFirst(),range.getLast());
       }
+      decoder.closeElement(subId);
     }
-    else if (subnode->getName() == "paramrange") {
+    else if (subId == ELEM_PARAMRANGE) {
       sawparamrange = true;
-      const List &sublist(subnode->getChildren());
-      List::const_iterator subiter;
-      for(subiter=sublist.begin();subiter!=sublist.end();++subiter) {
+      decoder.openElement();
+      while(decoder.peekElement() != 0) {
         Range range;
-        range.restoreXml(*subiter,glb);
+        range.decode(decoder);
         paramrange.insertRange(range.getSpace(),range.getFirst(),range.getLast());
       }
+      decoder.closeElement(subId);
     }
-    else if (subnode->getName() == "likelytrash") {
-      const List &flist(subnode->getChildren());
-      List::const_iterator fiter;
-      for(fiter=flist.begin();fiter!=flist.end();++fiter) {
+    else if (subId == ELEM_LIKELYTRASH) {
+      decoder.openElement();
+      while(decoder.peekElement() != 0) {
 	likelytrash.emplace_back();
-	likelytrash.back().restoreXml(*fiter,glb);
-      }	
-    }
-    else if (subnode->getName() == "pcode") {
-      if (subnode->getAttributeValue("inject") == "uponentry") {
-	injectUponEntry = glb->pcodeinjectlib->restoreXmlInject("Protomodel : "+name,
-								name+"@@inject_uponentry",
-								InjectPayload::CALLMECHANISM_TYPE,subnode);
-     }
-      else {
-	injectUponReturn = glb->pcodeinjectlib->restoreXmlInject("Protomodel : "+name,
-								 name+"@@inject_uponreturn",
-								 InjectPayload::CALLMECHANISM_TYPE,subnode);
+	likelytrash.back().decode(decoder);
       }
+      decoder.closeElement(subId);
     }
-    else if (subnode->getName() == "description") {
+    else if (subId == ELEM_PCODE) {
+      int4 injectId = glb->pcodeinjectlib->decodeInject("Protomodel : "+name, name,
+							InjectPayload::CALLMECHANISM_TYPE,decoder);
+      InjectPayload *payload = glb->pcodeinjectlib->getPayload(injectId);
+      if (payload->getName().find("uponentry") != string::npos)
+	injectUponEntry = injectId;
+      else
+	injectUponReturn = injectId;
     }
     else
-      throw LowlevelError("Unknown element in prototype: "+subnode->getName());
+      throw LowlevelError("Unknown element in prototype");
   }
+  decoder.closeElement(elemId);
   if ((!sawretaddr)&&(glb->defaultReturnAddr.space != (AddrSpace *)0)) {
     // Provide the default return address, if there isn't a specific one for the model
     effectlist.push_back(EffectRecord(glb->defaultReturnAddr,EffectRecord::return_address));
@@ -2371,7 +2560,7 @@ void ProtoModelMerged::intersectLikelyTrash(const vector<VarnodeData> &trashlist
   while((i<likelytrash.size())&&(j<trashlist.size())) {
     const VarnodeData &trs1( likelytrash[i] );
     const VarnodeData &trs2( trashlist[j] );
-    
+
     if (trs1 < trs2)
       i += 1;
     else if (trs2 < trs1)
@@ -2455,20 +2644,23 @@ ProtoModel *ProtoModelMerged::selectModel(ParamActive *active) const
   throw LowlevelError("No model matches : missing default");
 }
 
-void ProtoModelMerged::restoreXml(const Element *el)
+void ProtoModelMerged::decode(Decoder &decoder)
 
 {
-  name = el->getAttributeValue("name");
-  const List &list(el->getChildren());
-  List::const_iterator iter;
-  for(iter=list.begin();iter!=list.end();++iter) { // A tag for each merged prototype
-    const Element *subel = *iter;
-    ProtoModel *mymodel = glb->getModel( subel->getAttributeValue("name"));
+  uint4 elemId = decoder.openElement(ELEM_RESOLVEPROTOTYPE);
+  name = decoder.readString(ATTRIB_NAME);
+  for(;;) { // A tag for each merged prototype
+    uint4 subId = decoder.openElement();
+    if (subId != ELEM_MODEL) break;
+    string modelName = decoder.readString(ATTRIB_NAME);
+    ProtoModel *mymodel = glb->getModel( modelName );
     if (mymodel == (ProtoModel *)0)
-      throw LowlevelError("Missing prototype model: "+subel->getAttributeValue("name"));
+      throw LowlevelError("Missing prototype model: "+modelName);
+    decoder.closeElement(subId);
     foldIn(mymodel);
     modellist.push_back(mymodel);
   }
+  decoder.closeElement(elemId);
   ((ParamListMerged *)input)->finalize();
   ((ParamListMerged *)output)->finalize();
 }
@@ -2530,10 +2722,10 @@ ProtoParameter *ParameterBasic::clone(void) const
   return res;
 }
 
-const string &ParameterSymbol::getName(void) const 
+const string &ParameterSymbol::getName(void) const
 
-{ 
-  return sym->getName(); 
+{
+  return sym->getName();
 }
 
 Datatype *ParameterSymbol::getType(void) const
@@ -2678,7 +2870,7 @@ ProtoStoreSymbol::~ProtoStoreSymbol(void)
 
 /// Retrieve the specified ProtoParameter object, making sure it is a ParameterSymbol.
 /// If it doesn't exist, or if the object in the specific slot is not a ParameterSymbol,
-/// allocate an (unitialized) parameter.
+/// allocate an (uninitialized) parameter.
 /// \param i is the specified input slot
 /// \return the corresponding parameter
 ParameterSymbol *ProtoStoreSymbol::getSymbolBacked(int4 i)
@@ -2700,7 +2892,7 @@ ProtoParameter *ProtoStoreSymbol::setInput(int4 i, const string &nm,const Parame
 
 {
   ParameterSymbol *res = getSymbolBacked(i);
-  res->sym = scope->getCategorySymbol(0,i);
+  res->sym = scope->getCategorySymbol(Symbol::function_parameter,i);
   SymbolEntry *entry;
   Address usepoint;
 
@@ -2715,9 +2907,9 @@ ProtoParameter *ProtoStoreSymbol::setInput(int4 i, const string &nm,const Parame
   }
   if (res->sym == (Symbol *)0) {
     if (scope->discoverScope(pieces.addr,pieces.type->getSize(),usepoint) == (Scope *)0)
-      usepoint = restricted_usepoint; 
+      usepoint = restricted_usepoint;
     res->sym = scope->addSymbol(nm,pieces.type,pieces.addr,usepoint)->getSymbol();
-    scope->setCategory(res->sym,0,i);
+    scope->setCategory(res->sym,Symbol::function_parameter,i);
     if (isindirect || ishidden) {
       uint4 mirror = 0;
       if (isindirect)
@@ -2750,17 +2942,17 @@ ProtoParameter *ProtoStoreSymbol::setInput(int4 i, const string &nm,const Parame
 void ProtoStoreSymbol::clearInput(int4 i)
 
 {
-  Symbol *sym = scope->getCategorySymbol(0,i);
+  Symbol *sym = scope->getCategorySymbol(Symbol::function_parameter,i);
   if (sym != (Symbol *)0) {
-    scope->setCategory(sym,-1,0); // Remove it from category list
+    scope->setCategory(sym,Symbol::no_category,0); // Remove it from category list
     scope->removeSymbol(sym);	// Remove it altogether
   }
   // Renumber any category 0 symbol with index greater than i
-  int4 sz = scope->getCategorySize(0);
+  int4 sz = scope->getCategorySize(Symbol::function_parameter);
   for(int4 j=i+1;j<sz;++j) {
-    sym = scope->getCategorySymbol(0,j);
+    sym = scope->getCategorySymbol(Symbol::function_parameter,j);
     if (sym != (Symbol *)0)
-      scope->setCategory(sym,0,j-1);
+      scope->setCategory(sym,Symbol::function_parameter,j-1);
   }
 }
 
@@ -2773,13 +2965,13 @@ void ProtoStoreSymbol::clearAllInputs(void)
 int4 ProtoStoreSymbol::getNumInputs(void) const
 
 {
-  return scope->getCategorySize(0);
+  return scope->getCategorySize(Symbol::function_parameter);
 }
 
 ProtoParameter *ProtoStoreSymbol::getInput(int4 i)
 
 {
-  Symbol *sym = scope->getCategorySymbol(0,i);
+  Symbol *sym = scope->getCategorySymbol(Symbol::function_parameter,i);
   if (sym == (Symbol *)0)
     return (ProtoParameter *)0;
   ParameterSymbol *res = getSymbolBacked(i);
@@ -2824,16 +3016,16 @@ ProtoStore *ProtoStoreSymbol::clone(void) const
   return res;
 }
 
-void ProtoStoreSymbol::saveXml(ostream &s) const
+void ProtoStoreSymbol::encode(Encoder &encoder) const
 
 { // Do not store anything explicitly for a symboltable backed store
   // as the symboltable will be stored separately
 }
 
-void ProtoStoreSymbol::restoreXml(const Element *el,ProtoModel *model)
+void ProtoStoreSymbol::decode(Decoder &decoder,ProtoModel *model)
 
 {
-  throw LowlevelError("Do not restore symbol-backed prototype through this interface");
+  throw LowlevelError("Do not decode symbol-backed prototype through this interface");
 }
 
 /// \param vt is the \b void data-type used for an unspecified return value
@@ -2952,54 +3144,53 @@ ProtoStore *ProtoStoreInternal::clone(void) const
   return res;
 }
 
-void ProtoStoreInternal::saveXml(ostream &s) const
+void ProtoStoreInternal::encode(Encoder &encoder) const
 
 {
-  s << "<internallist>\n";
+  encoder.openElement(ELEM_INTERNALLIST);
   if (outparam != (ProtoParameter *)0) {
-    s << "<retparam";
+    encoder.openElement(ELEM_RETPARAM);
     if (outparam->isTypeLocked())
-      a_v_b(s,"typelock",true);
-    s << ">\n";
-    outparam->getAddress().saveXml(s);
-    outparam->getType()->saveXml(s);
-    s << "</retparam>\n";
+      encoder.writeBool(ATTRIB_TYPELOCK,true);
+    outparam->getAddress().encode(encoder);
+    outparam->getType()->encode(encoder);
+    encoder.closeElement(ELEM_RETPARAM);
   }
   else {
-    s << "<retparam>\n <addr/>\n <void/>\n</retparam>\n";
+    encoder.openElement(ELEM_RETPARAM);
+    encoder.openElement(ELEM_ADDR);
+    encoder.closeElement(ELEM_ADDR);
+    encoder.openElement(ELEM_VOID);
+    encoder.closeElement(ELEM_VOID);
+    encoder.closeElement(ELEM_RETPARAM);
   }
 
   for(int4 i=0;i<inparam.size();++i) {
     ProtoParameter *param = inparam[i];
-    s << "<param";
+    encoder.openElement(ELEM_PARAM);
     if (param->getName().size()!=0)
-      a_v(s,"name",param->getName());
+      encoder.writeString(ATTRIB_NAME,param->getName());
     if (param->isTypeLocked())
-      a_v_b(s,"typelock",true);
+      encoder.writeBool(ATTRIB_TYPELOCK, true);
     if (param->isNameLocked())
-      a_v_b(s,"namelock",true);
+      encoder.writeBool(ATTRIB_NAMELOCK, true);
     if (param->isThisPointer())
-      a_v_b(s,"thisptr",true);
+      encoder.writeBool(ATTRIB_THISPTR, true);
     if (param->isIndirectStorage())
-      a_v_b(s,"indirectstorage",true);
+      encoder.writeBool(ATTRIB_INDIRECTSTORAGE, true);
     if (param->isHiddenReturn())
-      a_v_b(s,"hiddenretparm",true);
-    s << ">\n";
-    param->getAddress().saveXml(s);
-    param->getType()->saveXml(s);
-    s << "</param>\n";
+      encoder.writeBool(ATTRIB_HIDDENRETPARM, true);
+    param->getAddress().encode(encoder);
+    param->getType()->encode(encoder);
+    encoder.closeElement(ELEM_PARAM);
   }
-  s << "</internallist>\n";
+  encoder.closeElement(ELEM_INTERNALLIST);
 }
 
-void ProtoStoreInternal::restoreXml(const Element *el,ProtoModel *model)
+void ProtoStoreInternal::decode(Decoder &decoder,ProtoModel *model)
 
 {
-  if (el->getName() != "internallist")
-    throw LowlevelError("Mismatched ProtoStore tag: ProtoStoreInternal did not get <internallist>");
   Architecture *glb = model->getArch();
-  const List &list(el->getChildren());
-  List::const_iterator iter;
   vector<ParameterPieces> pieces;
   vector<string> namelist;
   bool addressesdetermined = true;
@@ -3015,32 +3206,35 @@ void ProtoStoreInternal::restoreXml(const Element *el,ProtoModel *model)
   if (outparam->getAddress().isInvalid())
     addressesdetermined = false;
 
-  for(iter=list.begin();iter!=list.end();++iter) { // This is only the input params
-    const Element *subel = *iter;
+  uint4 elemId = decoder.openElement(ELEM_INTERNALLIST);
+  for(;;) { // This is only the input params
+    uint4 subId = decoder.openElement();		// <retparam> or <param>
+    if (subId == 0) break;
     string name;
     uint4 flags = 0;
-    for(int4 i=0;i<subel->getNumAttributes();++i) {
-      const string &attr( subel->getAttributeName(i) );
-      if (attr == "name")
-	name = subel->getAttributeValue(i);
-      else if (attr == "typelock") {
-	if (xml_readbool(subel->getAttributeValue(i)))
+    for(;;) {
+      uint4 attribId = decoder.getNextAttributeId();
+      if (attribId == 0) break;
+      if (attribId == ATTRIB_NAME)
+	name = decoder.readString();
+      else if (attribId == ATTRIB_TYPELOCK) {
+	if (decoder.readBool())
 	  flags |= ParameterPieces::typelock;
       }
-      else if (attr == "namelock") {
-	if (xml_readbool(subel->getAttributeValue(i)))
+      else if (attribId == ATTRIB_NAMELOCK) {
+	if (decoder.readBool())
 	  flags |= ParameterPieces::namelock;
       }
-      else if (attr == "thisptr") {
-	if (xml_readbool(subel->getAttributeValue(i)))
+      else if (attribId == ATTRIB_THISPTR) {
+	if (decoder.readBool())
 	  flags |= ParameterPieces::isthis;
       }
-      else if (attr == "indirectstorage") {
-	if (xml_readbool(subel->getAttributeValue(i)))
+      else if (attribId == ATTRIB_INDIRECTSTORAGE) {
+	if (decoder.readBool())
 	  flags |= ParameterPieces::indirectstorage;
       }
-      else if (attr == "hiddenretparm") {
-	if (xml_readbool(subel->getAttributeValue(i)))
+      else if (attribId == ATTRIB_HIDDENRETPARM) {
+	if (decoder.readBool())
 	  flags |= ParameterPieces::hiddenretparm;
       }
     }
@@ -3048,22 +3242,20 @@ void ProtoStoreInternal::restoreXml(const Element *el,ProtoModel *model)
       namelist.push_back(name);
     pieces.emplace_back();
     ParameterPieces &curparam( pieces.back() );
-    const List &sublist(subel->getChildren());
-    List::const_iterator subiter;
-    subiter = sublist.begin();
-    curparam.addr = Address::restoreXml(*subiter,glb);
-    ++subiter;
-    curparam.type = glb->types->restoreXmlType(*subiter);
+    curparam.addr = Address::decode(decoder);
+    curparam.type = glb->types->decodeType(decoder);
     curparam.flags = flags;
     if (curparam.addr.isInvalid())
       addressesdetermined = false;
+    decoder.closeElement(subId);
   }
+  decoder.closeElement(elemId);
   ProtoParameter *curparam;
   if (!addressesdetermined) {
     // If addresses for parameters are not provided, use
     // the model to derive them from type info
     vector<Datatype *> typelist;
-    for(int4 i=0;i<pieces.size();++i) // Save off the restored types
+    for(int4 i=0;i<pieces.size();++i) // Save off the decoded types
       typelist.push_back( pieces[i].type );
     vector<ParameterPieces> addrPieces;
     model->assignParameterStorage(typelist,addrPieces,true);
@@ -3095,7 +3287,7 @@ void ProtoStoreInternal::restoreXml(const Element *el,ProtoModel *model)
   }
 }
 
-/// This is called after a new prototype is established (via restoreXml or updateAllTypes)
+/// This is called after a new prototype is established (via decode or updateAllTypes)
 /// It makes sure that if the ProtoModel calls for a "this" parameter, then the appropriate parameter
 /// is explicitly marked as the "this".
 void FuncProto::updateThisPointer(void)
@@ -3114,8 +3306,8 @@ void FuncProto::updateThisPointer(void)
 
 /// If the \e effectlist for \b this is non-empty, it contains the complete set of
 /// EffectRecords.  Save just those that override the underlying list from ProtoModel
-/// \param s is the stream to write to
-void FuncProto::saveEffectXml(ostream &s) const
+/// \param encoder is the stream encoder
+void FuncProto::encodeEffect(Encoder &encoder) const
 
 {
   if (effectlist.empty()) return;
@@ -3134,55 +3326,51 @@ void FuncProto::saveEffectXml(ostream &s) const
       retAddr = &curRecord;
   }
   if (!unaffectedList.empty()) {
-    s << "  <unaffected>\n";
+    encoder.openElement(ELEM_UNAFFECTED);
     for(int4 i=0;i<unaffectedList.size();++i) {
-      s << "    ";
-      unaffectedList[i]->saveXml(s);
-      s << '\n';
+      unaffectedList[i]->encode(encoder);
     }
-    s << "  </unaffected>\n";
+    encoder.closeElement(ELEM_UNAFFECTED);
   }
   if (!killedByCallList.empty()) {
-    s << "  <killedbycall>\n";
+    encoder.openElement(ELEM_KILLEDBYCALL);
     for(int4 i=0;i<killedByCallList.size();++i) {
-      s << "    ";
-      killedByCallList[i]->saveXml(s);
-      s << '\n';
+      killedByCallList[i]->encode(encoder);
     }
-    s << "  </killedbycall>\n";
+    encoder.closeElement(ELEM_KILLEDBYCALL);
   }
   if (retAddr != (const EffectRecord *)0) {
-    s << "  <returnaddress>\n    ";
-    retAddr->saveXml(s);
-    s << "\n  </returnaddress>\n";
+    encoder.openElement(ELEM_RETURNADDRESS);
+    retAddr->encode(encoder);
+    encoder.closeElement(ELEM_RETURNADDRESS);
   }
 }
 
-/// If the -likelytrash- list is not empty it overrides the underlying ProtoModel's list.
-/// Write any VarnodeData that does not appear in the ProtoModel to the XML stream.
-/// \param s is the stream to write to
-void FuncProto::saveLikelyTrashXml(ostream &s) const
+/// If the \b likelytrash list is not empty it overrides the underlying ProtoModel's list.
+/// Encode any VarnodeData that does not appear in the ProtoModel to the stream.
+/// \param encoder is the stream encoder
+void FuncProto::encodeLikelyTrash(Encoder &encoder) const
 
 {
   if (likelytrash.empty()) return;
   vector<VarnodeData>::const_iterator iter1,iter2;
   iter1 = model->trashBegin();
   iter2 = model->trashEnd();
-  s << "  <likelytrash>\n";
+  encoder.openElement(ELEM_LIKELYTRASH);
   for(vector<VarnodeData>::const_iterator iter=likelytrash.begin();iter!=likelytrash.end();++iter) {
     const VarnodeData &cur(*iter);
     if (binary_search(iter1,iter2,cur)) continue;	// Already exists in ProtoModel
-    s << "    <addr";
-    cur.space->saveXmlAttributes(s,cur.offset,cur.size);
-    s << "/>\n";
+    encoder.openElement(ELEM_ADDR);
+    cur.space->encodeAttributes(encoder,cur.offset,cur.size);
+    encoder.closeElement(ELEM_ADDR);
   }
-  s << "  </likelytrash>\n";
+  encoder.closeElement(ELEM_LIKELYTRASH);
 }
 
-/// EffectRecords read into \e effectlist by restoreXml() override the list from ProtoModel.
+/// EffectRecords read into \e effectlist by decode() override the list from ProtoModel.
 /// If this list is not empty, set up \e effectlist as a complete override containing
 /// all EffectRecords from ProtoModel plus all the overrides.
-void FuncProto::restoreEffectXml(void)
+void FuncProto::decodeEffect(void)
 
 {
   if (effectlist.empty()) return;
@@ -3211,10 +3399,10 @@ void FuncProto::restoreEffectXml(void)
     sort(effectlist.begin(),effectlist.end(),EffectRecord::compareByAddress);
 }
 
-/// VarnodeData read into \e likelytrash by restoreXml() are additional registers over
+/// VarnodeData read into \e likelytrash by decode() are additional registers over
 /// what is already in ProtoModel.  Make \e likelytrash in \b this a complete list by
 /// merging in everything from ProtoModel.
-void FuncProto::restoreLikelyTrashXml(void)
+void FuncProto::decodeLikelyTrash(void)
 
 {
   if (likelytrash.empty()) return;
@@ -3258,7 +3446,7 @@ void FuncProto::paramShift(int4 paramshift)
     nmlist.push_back("");
     typelist.push_back(extra);
   }
-  
+
   if (isInputLocked()) {	// Copy in the original parameter types
     int4 num = numParams();
     for(int4 i=0;i<num;++i) {
@@ -3367,7 +3555,6 @@ void FuncProto::setModel(ProtoModel *m)
     model = m;
     extrapop = ProtoModel::extrapop_unknown;
   }
-  flags &= ~((uint4)unknown_model);	// Model is not "unknown" (even if null pointer is passed in)
 }
 
 /// The full function prototype is (re)set from a model, names, and data-types
@@ -3561,6 +3748,19 @@ void FuncProto::clearInput(void)
   flags &= ~((uint4)voidinputlock); // If a void was locked in clear it
 }
 
+/// Set the id directly.
+/// \param id is the new id
+void FuncProto::setInjectId(int4 id)
+
+{
+  if (id < 0)
+    cancelInjectId();
+  else {
+    injectid = id;
+    flags |= is_inline;
+  }
+}
+
 void FuncProto::cancelInjectId(void)
 
 {
@@ -3730,7 +3930,7 @@ void FuncProto::updateAllTypes(const vector<string> &namelist,const vector<Datat
   store->clearOutput();
   flags &= ~((uint4)voidinputlock);
   setDotdotdot(dtdtdt);
-  
+
   vector<ParameterPieces> pieces;
 
   // Calculate what memory locations hold each type
@@ -3809,9 +4009,10 @@ vector<VarnodeData>::const_iterator FuncProto::trashEnd(void) const
 /// If the input is locked, check if the location overlaps one of the current parameters.
 /// Otherwise, check if the location overlaps an entry in the prototype model.
 /// Return:
-///   - 0 if the location neither contains or is contained by a parameter storage location
-///   - 1 if the location is contained by a parameter storage location
-///   - 2 if the location contains a parameter storage location
+///   - no_containment - there is no containment between the range and any input parameter
+///   - contains_unjustified - at least one parameter contains the range
+///   - contains_justified - at least one parameter contains this range as its least significant bytes
+///   - contained_by - no parameter contains this range, but the range contains at least one parameter
 /// \param addr is the starting address of the given storage location
 /// \param size is the number of bytes in the storage
 /// \return the characterization code
@@ -3823,7 +4024,8 @@ int4 FuncProto::characterizeAsInputParam(const Address &addr,int4 size) const
     int4 num = numParams();
     if (num > 0) {
       bool locktest = false;	// Have tested against locked symbol
-      int4 characterCode = 0;
+      bool resContains = false;
+      bool resContainedBy = false;
       for(int4 i=0;i<num;++i) {
 	ProtoParameter *param = getParam(i);
 	if (!param->isTypeLocked()) continue;
@@ -3831,15 +4033,56 @@ int4 FuncProto::characterizeAsInputParam(const Address &addr,int4 size) const
 	Address iaddr = param->getAddress();
 	// If the parameter already exists, the varnode must be justified in the parameter relative
 	// to the endianness of the space, irregardless of the forceleft flag
-	if (iaddr.justifiedContain(param->getSize(),addr,size,false)==0)
-	  return 1;
+	int4 off = iaddr.justifiedContain(param->getSize(), addr, size, false);
+	if (off == 0)
+	  return ParamEntry::contains_justified;
+	else if (off > 0)
+	  resContains = true;
 	if (iaddr.containedBy(param->getSize(), addr, size))
-	  characterCode = 2;
+	  resContainedBy = true;
       }
-      if (locktest) return characterCode;
+      if (locktest) {
+	if (resContains) return ParamEntry::contains_unjustified;
+	if (resContainedBy) return ParamEntry::contained_by;
+	return ParamEntry::no_containment;
+      }
     }
   }
   return model->characterizeAsInputParam(addr, size);
+}
+
+/// \brief Decide whether a given storage location could be, or could hold, the return value
+///
+/// If the output is locked, check if the location overlaps the current return storage.
+/// Otherwise, check if the location overlaps an entry in the prototype model.
+/// Return:
+///   - no_containment - there is no containment between the range and any output storage
+///   - contains_unjustified - at least one output storage contains the range
+///   - contains_justified - at least one output storage contains this range as its least significant bytes
+///   - contained_by - no output storage contains this range, but the range contains at least one output storage
+/// \param addr is the starting address of the given storage location
+/// \param size is the number of bytes in the storage
+/// \return the characterization code
+int4 FuncProto::characterizeAsOutput(const Address &addr,int4 size) const
+
+{
+  if (isOutputLocked()) {
+    ProtoParameter *outparam = getOutput();
+    if (outparam->getType()->getMetatype() == TYPE_VOID)
+      return ParamEntry::no_containment;
+    Address iaddr = outparam->getAddress();
+    // If the output is locked, the varnode must be justified in the location relative
+    // to the endianness of the space, irregardless of the forceleft flag
+    int4 off = iaddr.justifiedContain(outparam->getSize(),addr,size,false);
+    if (off == 0)
+      return ParamEntry::contains_justified;
+    else if (off > 0)
+      return ParamEntry::contains_unjustified;
+    if (iaddr.containedBy(outparam->getSize(),addr,size))
+      return ParamEntry::contained_by;
+    return ParamEntry::no_containment;
+  }
+  return model->characterizeAsOutput(addr, size);
 }
 
 /// \brief Decide whether a given storage location could be an input parameter
@@ -3939,8 +4182,6 @@ bool FuncProto::unjustifiedInputParam(const Address &addr,int4 size,VarnodeData 
   return model->unjustifiedInputParam(addr,size,res);
 }
 
-/// \brief Pass-back the biggest input parameter contained within the given range
-///
 /// \param loc is the starting address of the given range
 /// \param size is the number of bytes in the range
 /// \param res will hold the parameter storage description being passed back
@@ -3974,6 +4215,51 @@ bool FuncProto::getBiggestContainedInputParam(const Address &loc,int4 size,Varno
   return model->getBiggestContainedInputParam(loc,size,res);
 }
 
+/// \param loc is the starting address of the given range
+/// \param size is the number of bytes in the range
+/// \param res will hold the output storage description being passed back
+/// \return \b true if there is at least one possible output contained in the range
+bool FuncProto::getBiggestContainedOutput(const Address &loc,int4 size,VarnodeData &res) const
+
+{
+  if (isOutputLocked()) {
+    ProtoParameter *outparam = getOutput();
+    if (outparam->getType()->getMetatype() == TYPE_VOID)
+      return false;
+    Address iaddr = outparam->getAddress();
+    if (iaddr.containedBy(outparam->getSize(), loc, size)) {
+      res.space = iaddr.getSpace();
+      res.offset = iaddr.getOffset();
+      res.size = outparam->getSize();
+      return true;
+    }
+    return false;
+  }
+  return model->getBiggestContainedOutput(loc,size,res);
+}
+
+/// A likely pointer data-type for "this" pointer is passed in, which can be pointer to void. As the
+/// storage of "this" may depend on the full prototype, if the prototype is not already locked in, we
+/// assume the prototype returns void and takes the given data-type as the single input parameter.
+/// \param dt is the given input data-type
+/// \return the starting address of storage for the "this" pointer
+Address FuncProto::getThisPointerStorage(Datatype *dt)
+
+{
+  if (!model->hasThisPointer())
+    return Address();
+  vector<Datatype *> typelist;
+  typelist.push_back(getOutputType());
+  typelist.push_back(dt);
+  vector<ParameterPieces> res;
+  model->assignParameterStorage(typelist, res, true);
+  for(int4 i=1;i<res.size();++i) {
+    if ((res[i].flags & ParameterPieces::hiddenretparm) != 0) continue;
+    return res[i].addr;
+  }
+  return Address();
+}
+
 /// \brief Decide if \b this can be safely restricted to match another prototype
 ///
 /// Do \b this and another given function prototype share enough of
@@ -4001,7 +4287,7 @@ bool FuncProto::isCompatible(const FuncProto &op2) const
       // the prototype hasn't been marked as varargs
       if (isInputLocked()) return false;
     }
-    else 
+    else
       return false;
   }
 
@@ -4045,63 +4331,63 @@ void FuncProto::printRaw(const string &funcname,ostream &s) const
   s << ") extrapop=" << dec << extrapop;
 }
 
-/// \brief Save \b this to an XML stream as a \<prototype> tag.
+/// \brief Encode \b this to a stream as a \<prototype> element.
 ///
 /// Save everything under the control of this prototype, which
 /// may \e not include input parameters, as these are typically
 /// controlled by the function's symbol table scope.
-/// \param s is the output stream
-void FuncProto::saveXml(ostream &s) const
+/// \param encoder is the stream encoder
+void FuncProto::encode(Encoder &encoder) const
 
 {
-  s << " <prototype";
-  a_v(s,"model",model->getName());
+  encoder.openElement(ELEM_PROTOTYPE);
+  encoder.writeString(ATTRIB_MODEL, model->getName());
   if (extrapop == ProtoModel::extrapop_unknown)
-    a_v(s,"extrapop","unknown");
+    encoder.writeString(ATTRIB_EXTRAPOP, "unknown");
   else
-    a_v_i(s,"extrapop",extrapop);
+    encoder.writeSignedInteger(ATTRIB_EXTRAPOP, extrapop);
   if (isDotdotdot())
-    a_v_b(s,"dotdotdot",true);
+    encoder.writeBool(ATTRIB_DOTDOTDOT, true);
   if (isModelLocked())
-    a_v_b(s,"modellock",true);
+    encoder.writeBool(ATTRIB_MODELLOCK, true);
   if ((flags&voidinputlock)!=0)
-    a_v_b(s,"voidlock",true);
+    encoder.writeBool(ATTRIB_VOIDLOCK, true);
   if (isInline())
-    a_v_b(s,"inline",true);
+    encoder.writeBool(ATTRIB_INLINE, true);
   if (isNoReturn())
-    a_v_b(s,"noreturn",true);
+    encoder.writeBool(ATTRIB_NORETURN, true);
   if (hasCustomStorage())
-    a_v_b(s,"custom",true);
+    encoder.writeBool(ATTRIB_CUSTOM, true);
   if (isConstructor())
-    a_v_b(s,"constructor",true);
+    encoder.writeBool(ATTRIB_CONSTRUCTOR, true);
   if (isDestructor())
-    a_v_b(s,"destructor",true);
-  s << ">\n";
+    encoder.writeBool(ATTRIB_DESTRUCTOR, true);
   ProtoParameter *outparam = store->getOutput();
-  s << "  <returnsym";
+  encoder.openElement(ELEM_RETURNSYM);
   if (outparam->isTypeLocked())
-    a_v_b(s,"typelock",true);
-  s << ">\n   ";
-  outparam->getAddress().saveXml(s,outparam->getSize());
-  outparam->getType()->saveXml(s);
-  s << "  </returnsym>\n";
-  saveEffectXml(s);
-  saveLikelyTrashXml(s);
+    encoder.writeBool(ATTRIB_TYPELOCK, true);
+  outparam->getAddress().encode(encoder,outparam->getSize());
+  outparam->getType()->encode(encoder);
+  encoder.closeElement(ELEM_RETURNSYM);
+  encodeEffect(encoder);
+  encodeLikelyTrash(encoder);
   if (injectid >= 0) {
     Architecture *glb = model->getArch();
-    s << "  <inject>" << glb->pcodeinjectlib->getCallFixupName(injectid) << "</inject>\n";
+    encoder.openElement(ELEM_INJECT);
+    encoder.writeString(ATTRIB_CONTENT, glb->pcodeinjectlib->getCallFixupName(injectid));
+    encoder.closeElement(ELEM_INJECT);
   }
-  store->saveXml(s);		// Store any internally backed prototyped symbols
-  s << " </prototype>\n";
+  store->encode(encoder);		// Store any internally backed prototyped symbols
+  encoder.closeElement(ELEM_PROTOTYPE);
 }
 
-/// \brief Restore \b this from an XML stream
+/// \brief Restore \b this from a \<prototype> element in the given stream
 ///
 /// The backing store for the parameters must already be established using either
 /// setStore() or setInternal().
-/// \param el is the \<prototype> XML element
+/// \param decoder is the given stream decoder
 /// \param glb is the Architecture owning the prototype
-void FuncProto::restoreXml(const Element *el,Architecture *glb)
+void FuncProto::decode(Decoder &decoder,Architecture *glb)
 
 {
   // Model must be set first
@@ -4109,65 +4395,57 @@ void FuncProto::restoreXml(const Element *el,Architecture *glb)
     throw LowlevelError("Prototype storage must be set before restoring FuncProto");
   ProtoModel *mod = (ProtoModel *)0;
   bool seenextrapop = false;
-  bool seenunknownmod = false;
   int4 readextrapop;
-  int4 num = el->getNumAttributes();
   flags = 0;
   injectid = -1;
-  for(int4 i=0;i<num;++i) {
-    const string &attrname( el->getAttributeName(i) );
-    if (attrname == "model") {
-      const string &modelname( el->getAttributeValue(i) );
-      if ((modelname == "default")||(modelname.size()==0))
-	mod = glb->defaultfp;	// Get default model
-      else if (modelname == "unknown") {
-	mod = glb->defaultfp;		// Use the default
-	seenunknownmod = true;
-      }
-      else
-	mod = glb->getModel(modelname);
-    }
-    else if (attrname == "extrapop") {
-      seenextrapop = true;
-      const string &expopval( el->getAttributeValue(i) );
-      if (expopval == "unknown")
-	readextrapop = ProtoModel::extrapop_unknown;
+  uint4 elemId = decoder.openElement(ELEM_PROTOTYPE);
+  for(;;) {
+    uint4 attribId = decoder.getNextAttributeId();
+    if (attribId == 0) break;
+    if (attribId == ATTRIB_MODEL) {
+      string modelname = decoder.readString();
+      if (modelname.size()==0 || modelname == "default")
+	mod = glb->defaultfp;	// Use the default model
       else {
-	istringstream i1(expopval);
-	i1.unsetf(ios::dec | ios::hex | ios::oct);
-	i1 >> readextrapop;
+	mod = glb->getModel(modelname);
+	if (mod == (ProtoModel *)0)	// Model name is unrecognized
+	  mod = glb->createUnknownModel(modelname);	// Create model with placeholder behavior
       }
     }
-    else if (attrname == "modellock") {
-      if (xml_readbool(el->getAttributeValue(i)))
+    else if (attribId == ATTRIB_EXTRAPOP) {
+      seenextrapop = true;
+      readextrapop = decoder.readSignedIntegerExpectString("unknown", ProtoModel::extrapop_unknown);
+    }
+    else if (attribId == ATTRIB_MODELLOCK) {
+      if (decoder.readBool())
 	flags |= modellock;
     }
-    else if (attrname == "dotdotdot") {
-      if (xml_readbool(el->getAttributeValue(i)))
+    else if (attribId == ATTRIB_DOTDOTDOT) {
+      if (decoder.readBool())
 	flags |= dotdotdot;
     }
-    else if (attrname == "voidlock") {
-      if (xml_readbool(el->getAttributeValue(i)))
+    else if (attribId == ATTRIB_VOIDLOCK) {
+      if (decoder.readBool())
 	flags |= voidinputlock;
     }
-    else if (attrname == "inline") {
-      if (xml_readbool(el->getAttributeValue(i)))
+    else if (attribId == ATTRIB_INLINE) {
+      if (decoder.readBool())
 	flags |= is_inline;
     }
-    else if (attrname == "noreturn") {
-      if (xml_readbool(el->getAttributeValue(i)))
+    else if (attribId == ATTRIB_NORETURN) {
+      if (decoder.readBool())
 	flags |= no_return;
     }
-    else if (attrname == "custom") {
-      if (xml_readbool(el->getAttributeValue(i)))
+    else if (attribId == ATTRIB_CUSTOM) {
+      if (decoder.readBool())
 	flags |= custom_storage;
     }
-    else if (attrname == "constructor") {
-      if (xml_readbool(el->getAttributeValue(i)))
+    else if (attribId == ATTRIB_CONSTRUCTOR) {
+      if (decoder.readBool())
 	flags |= is_constructor;
     }
-    else if (attrname == "destructor") {
-      if (xml_readbool(el->getAttributeValue(i)))
+    else if (attribId == ATTRIB_DESTRUCTOR) {
+      if (decoder.readBool())
 	flags |= is_destructor;
     }
   }
@@ -4175,43 +4453,31 @@ void FuncProto::restoreXml(const Element *el,Architecture *glb)
     setModel(mod);		// This sets extrapop to model default
   if (seenextrapop)		// If explicitly set
     extrapop = readextrapop;
-  if (seenunknownmod)
-    flags |= unknown_model;
 
-  const List &list(el->getChildren());
-  List::const_iterator iter = list.begin();
-
-  const Element *subel = (const Element *)0;
-  if (iter != list.end()) {
-    subel = *iter;
-    ++iter;
-  }
-  if (subel != (const Element *)0) {
+  uint4 subId = decoder.peekElement();
+  if (subId != 0) {
     ParameterPieces outpieces;
     bool outputlock = false;
 
-    if (subel->getName() == "returnsym") {
-      num = subel->getNumAttributes();
-      for(int4 i=0;i<num;++i) {
-	const string &attrname( subel->getAttributeName(i) );
-	if (attrname == "typelock")
-	  outputlock = xml_readbool(subel->getAttributeValue(i));
+    if (subId == ELEM_RETURNSYM) {
+      decoder.openElement();
+      for(;;) {
+	uint4 attribId = decoder.getNextAttributeId();
+	if (attribId == 0) break;
+	if (attribId == ATTRIB_TYPELOCK)
+	  outputlock = decoder.readBool();
       }
-      const List &list2(subel->getChildren());
-      List::const_iterator riter = list2.begin();
-      
       int4 tmpsize;
-      outpieces.addr = Address::restoreXml(*riter,glb,tmpsize);
-      ++riter;
-      outpieces.type = glb->types->restoreXmlType(*riter);
+      outpieces.addr = Address::decode(decoder,tmpsize);
+      outpieces.type = glb->types->decodeType(decoder);
       outpieces.flags = 0;
+      decoder.closeElement(subId);
     }
-    else if (subel->getName() == "addr") { // Old-style specification of return (supported partially for backward compat)
+    else if (subId == ELEM_ADDR) { // Old-style specification of return (supported partially for backward compat)
       int4 tmpsize;
-      outpieces.addr = Address::restoreXml(subel,glb,tmpsize);
-      outpieces.type = glb->types->restoreXmlType(*iter);
+      outpieces.addr = Address::decode(decoder,tmpsize);
+      outpieces.type = glb->types->decodeType(decoder);
       outpieces.flags = 0;
-      ++iter;
     }
     else
       throw LowlevelError("Missing <returnsym> tag");
@@ -4225,53 +4491,55 @@ void FuncProto::restoreXml(const Element *el,Architecture *glb)
   if (((flags&voidinputlock)!=0)||(isOutputLocked()))
     flags |= modellock;
 
-  for(;iter!=list.end();++iter) {
-    if ((*iter)->getName() == "unaffected") {
-      const List &list2((*iter)->getChildren());
-      List::const_iterator iter2 = list2.begin();
-      while(iter2 != list2.end()) {
+  for(;;) {
+    subId = decoder.peekElement();
+    if (subId == 0) break;
+    if (subId == ELEM_UNAFFECTED) {
+      decoder.openElement();
+      while(decoder.peekElement() != 0) {
 	effectlist.emplace_back();
-	effectlist.back().restoreXml(EffectRecord::unaffected,*iter2,glb);
-	++iter2;
+	effectlist.back().decode(EffectRecord::unaffected,decoder);
       }
+      decoder.closeElement(subId);
     }
-    else if ((*iter)->getName() == "killedbycall") {
-      const List &list2((*iter)->getChildren());
-      List::const_iterator iter2 = list2.begin();
-      while(iter2 != list2.end()) {
+    else if (subId == ELEM_KILLEDBYCALL) {
+      decoder.openElement();
+      while(decoder.peekElement() != 0) {
 	effectlist.emplace_back();
-	effectlist.back().restoreXml(EffectRecord::killedbycall,*iter2,glb);
-	++iter2;
+	effectlist.back().decode(EffectRecord::killedbycall,decoder);
       }
+      decoder.closeElement(subId);
     }
-    else if ((*iter)->getName() == "returnaddress") {
-      const List &list2((*iter)->getChildren());
-      List::const_iterator iter2 = list2.begin();
-      while(iter2 != list2.end()) {
+    else if (subId == ELEM_RETURNADDRESS) {
+      decoder.openElement();
+      while(decoder.peekElement() != 0) {
 	effectlist.emplace_back();
-	effectlist.back().restoreXml(EffectRecord::return_address,*iter2,glb);
-	++iter2;
+	effectlist.back().decode(EffectRecord::return_address,decoder);
       }
+      decoder.closeElement(subId);
     }
-    else if ((*iter)->getName() == "likelytrash") {
-      const List &list2((*iter)->getChildren());
-      List::const_iterator iter2 = list2.begin();
-      while(iter2 != list2.end()) {
+    else if (subId == ELEM_LIKELYTRASH) {
+      decoder.openElement();
+      while(decoder.peekElement() != 0) {
 	likelytrash.emplace_back();
-	likelytrash.back().restoreXml(*iter2,glb);
-	++iter2;
+	likelytrash.back().decode(decoder);
       }
+      decoder.closeElement(subId);
     }
-    else if ((*iter)->getName() == "inject") {
-      injectid = glb->pcodeinjectlib->getPayloadId(InjectPayload::CALLFIXUP_TYPE,(*iter)->getContent());
+    else if (subId == ELEM_INJECT) {
+      decoder.openElement();
+      string injectString = decoder.readString(ATTRIB_CONTENT);
+      injectid = glb->pcodeinjectlib->getPayloadId(InjectPayload::CALLFIXUP_TYPE,injectString);
       flags |= is_inline;
+      decoder.closeElement(subId);
     }
-    else if ((*iter)->getName() == "internallist") {
-      store->restoreXml(*iter,model);
+    else if (subId == ELEM_INTERNALLIST) {
+      store->decode(decoder,model);
     }
   }
-  restoreEffectXml();
-  restoreLikelyTrashXml();
+  decoder.closeElement(elemId);
+  decodeEffect();
+  decodeLikelyTrash();
   if (!isModelLocked()) {
     if (isInputLocked())
       flags |= modellock;
@@ -4284,6 +4552,23 @@ void FuncProto::restoreXml(const Element *el,Architecture *glb)
     throw LowlevelError("<returnsym> tag must include a valid storage address");
   }
   updateThisPointer();
+}
+
+/// \brief Add a an input parameter that will resolve to the current stack offset for \b this call site
+///
+/// A LOAD from a free reference to the \e spacebase pointer of the given AddrSpace is created and
+/// its output is added as a parameter to the call.  Later the LOAD should resolve to a COPY from
+/// a Varnode in the AddrSpace, whose offset is then the current offset.
+/// \param data is the function where the LOAD is created
+/// \param spacebase is the given (stack) AddrSpace
+void FuncCallSpecs::createPlaceholder(Funcdata &data,AddrSpace *spacebase)
+
+{
+  int4 slot = op->numInput();
+  Varnode *loadval = data.opStackLoad(spacebase,0,1,op,(Varnode *)0,false);
+  data.opInsertInput(op,loadval,slot);
+  setStackPlaceholderSlot(slot);
+  loadval->setSpacebasePlaceholder();
 }
 
 /// \brief Calculate the stack offset of \b this call site
@@ -4309,12 +4594,11 @@ void FuncCallSpecs::resolveSpacebaseRelative(Funcdata &data,Varnode *phvn)
 
   if (stackPlaceholderSlot >= 0) {
     if (op->getIn(stackPlaceholderSlot) == phvn) {
-      data.opRemoveInput(op,stackPlaceholderSlot);
-      clearStackPlaceholderSlot();
+      abortSpacebaseRelative(data);
       return;
     }
   }
-  
+
   if (isInputLocked()) {
     // The prototype is locked and had stack parameters, we grab the relative offset from this
     // rather than from a placeholder
@@ -4342,8 +4626,12 @@ void FuncCallSpecs::abortSpacebaseRelative(Funcdata &data)
 
 {
   if (stackPlaceholderSlot >= 0) {
+    Varnode *vn = op->getIn(stackPlaceholderSlot);
     data.opRemoveInput(op,stackPlaceholderSlot);
     clearStackPlaceholderSlot();
+    // Remove the op producing the placeholder as well
+    if (vn->hasNoDescend() && vn->getSpace()->getType() == IPTR_INTERNAL && vn->isWritten())
+      data.opDestroy(vn->getDef());
   }
 }
 
@@ -4380,8 +4668,8 @@ void FuncCallSpecs::setFuncdata(Funcdata *f)
   fd = f;
   if (fd != (Funcdata *)0) {
     entryaddress = fd->getAddress();
-    if (fd->getName().size() != 0)
-      name = fd->getName();
+    if (fd->getDisplayName().size() != 0)
+      name = fd->getDisplayName();
   }
 }
 
@@ -4515,23 +4803,25 @@ PcodeOp *FuncCallSpecs::transferLockedOutputParam(ProtoParameter *param)
   return (PcodeOp *)0;
 }
 
-/// \brief List and/or create a Varnode for each input parameter of \b this prototype
+/// \brief List and/or create a Varnode for each input parameter of matching a source prototype
 ///
-/// Varnodes will be passed back in order that match current input parameters.
+/// Varnodes are taken for current trials associated with \b this call spec.
+/// Varnodes will be passed back in the order that they match the source input parameters.
 /// A NULL Varnode indicates a stack parameter. Varnode dimensions may not match
 /// parameter dimensions exactly.
 /// \param newinput will hold the resulting list of Varnodes
+/// \param source is the source prototype
 /// \return \b false only if the list needs to indicate stack variables and there is no stack-pointer placeholder
-bool FuncCallSpecs::transferLockedInput(vector<Varnode *> &newinput)
+bool FuncCallSpecs::transferLockedInput(vector<Varnode *> &newinput,const FuncProto &source)
 
 {
   newinput.push_back(op->getIn(0)); // Always keep the call destination address
-  int4 numparams = numParams();
+  int4 numparams = source.numParams();
   Varnode *stackref = (Varnode *)0;
   for(int4 i=0;i<numparams;++i) {
-    int4 reuse = transferLockedInputParam(getParam(i));
+    int4 reuse = transferLockedInputParam(source.getParam(i));
     if (reuse == 0) return false;
-    if (reuse > 0) 
+    if (reuse > 0)
       newinput.push_back(op->getIn(reuse));
     else {
       if (stackref == (Varnode *)0)
@@ -4544,17 +4834,18 @@ bool FuncCallSpecs::transferLockedInput(vector<Varnode *> &newinput)
   return true;
 }
 
-/// \brief Pass back the Varnode needed to match the output parameter (return value)
+/// \brief Pass back the Varnode needed to match the output parameter (return value) of a source prototype
 ///
-/// Search for the Varnode matching the current output parameter and pass
+/// Search for the Varnode matching the output parameter and pass
 /// it back. The dimensions of the Varnode may not exactly match the return value.
-/// If the return value is e void, a NULL is passed back.
+/// If the return value is \e void, a NULL is passed back.
 /// \param newoutput will hold the passed back Varnode
+/// \param source is the source prototype
 /// \return \b true if the passed back value is accurate
-bool FuncCallSpecs::transferLockedOutput(Varnode *&newoutput)
+bool FuncCallSpecs::transferLockedOutput(Varnode *&newoutput,const FuncProto &source)
 
 {
-  ProtoParameter *param = getOutput();
+  ProtoParameter *param = source.getOutput();
   if (param->getType()->getMetatype() == TYPE_VOID) {
     newoutput = (Varnode *)0;
     return true;
@@ -4639,6 +4930,8 @@ void FuncCallSpecs::commitNewOutputs(Funcdata &data,Varnode *newout)
     // We could conceivably truncate the output to the correct size to match the parameter
     activeoutput.registerTrial(param->getAddress(),param->getSize());
     PcodeOp *indop = newout->getDef();
+    if (newout->getSize() == 1 && param->getType()->getMetatype() == TYPE_BOOL && data.isTypeRecoveryOn())
+      data.opMarkCalculatedBool(op);
     if (newout->getSize() == param->getSize()) {
       if (indop != op) {
 	data.opUnsetOutput(indop);
@@ -4808,16 +5101,17 @@ bool FuncCallSpecs::lateRestriction(const FuncProto &restrictedProto,vector<Varn
   }
 
   if (!isCompatible(restrictedProto)) return false;
-  copy(restrictedProto);		// Convert ourselves to restrictedProto
-  //  if (!isInputLocked()) return false;
-  if (isDotdotdot() && (!isinputactive)) return false;
+  if (restrictedProto.isDotdotdot() && (!isinputactive)) return false;
 
-  // Redo all the varnode inputs (if possible)
-  if (isInputLocked())
-    if (!transferLockedInput(newinput)) return false;
-  // Redo all the varnode outputs (if possible)
-  if (isOutputLocked())
-    if (!transferLockedOutput(newoutput)) return false;
+  if (restrictedProto.isInputLocked()) {
+    if (!transferLockedInput(newinput,restrictedProto))		// Redo all the varnode inputs (if possible)
+      return false;
+  }
+  if (restrictedProto.isOutputLocked()) {
+    if (!transferLockedOutput(newoutput,restrictedProto))	// Redo all the varnode outputs (if possible)
+      return false;
+  }
+  copy(restrictedProto);		// Convert ourselves to restrictedProto
 
   return true;
 }
@@ -4836,14 +5130,12 @@ void FuncCallSpecs::deindirect(Funcdata &data,Funcdata *newfd)
 
 {
   entryaddress = newfd->getAddress();
-  name = newfd->getName();
+  name = newfd->getDisplayName();
   fd = newfd;
 
   Varnode *vn = data.newVarnodeCallSpecs(this);
   data.opSetInput(op,vn,0);
   data.opSetOpcode(op,CPUI_CALL);
-  if (isOverride())	// If we are overridden at the call-site
-    return;		// Don't use the discovered function prototype
 
   data.getOverride().insertIndirectOverride(op->getAddr(),entryaddress);
 
@@ -4852,14 +5144,17 @@ void FuncCallSpecs::deindirect(Funcdata &data,Funcdata *newfd)
   vector<Varnode *> newinput;
   Varnode *newoutput;
   FuncProto &newproto( newfd->getFuncProto() );
-  if ((!newproto.isNoReturn())&&(!newproto.isInline())&&
-      lateRestriction(newproto,newinput,newoutput)) {
-    commitNewInputs(data,newinput);
-    commitNewOutputs(data,newoutput);
+  if ((!newproto.isNoReturn())&&(!newproto.isInline())) {
+    if (isOverride())	// If we are overridden at the call-site
+      return;		// Don't use the discovered function prototype
+
+    if (lateRestriction(newproto,newinput,newoutput)) {
+      commitNewInputs(data,newinput);
+      commitNewOutputs(data,newoutput);
+      return;	// We have successfully updated the prototype, don't restart
+    }
   }
-  else {
-    data.setRestartPending(true);
-  }
+  data.setRestartPending(true);
 }
 
 /// \brief Force a more restrictive prototype on \b this call site
@@ -4984,7 +5279,7 @@ void FuncCallSpecs::checkInputTrialUse(Funcdata &data,AliasChecker &aliascheck)
   int4 expop = 0;
   if (hasModel()) {
     callee_pop = (getModelExtraPop() == ProtoModel::extrapop_unknown);
-    if (callee_pop) {		
+    if (callee_pop) {
       expop = getExtraPop();
       // Tried to use getEffectiveExtraPop at one point, but it is too unreliable
       if ((expop==ProtoModel::extrapop_unknown)||(expop <=4))
@@ -5015,7 +5310,7 @@ void FuncCallSpecs::checkInputTrialUse(Funcdata &data,AliasChecker &aliascheck)
 	  trial.markNoUse();
       }
       else if (ancestorReal.execute(op,slot,&trial,false)) {
-	if (data.ancestorOpUse(maxancestor,vn,op,trial,0))
+	if (data.ancestorOpUse(maxancestor,vn,op,trial,0,0))
 	  trial.markActive();
 	else
 	  trial.markInactive();
@@ -5025,7 +5320,7 @@ void FuncCallSpecs::checkInputTrialUse(Funcdata &data,AliasChecker &aliascheck)
     }
     else {
       if (ancestorReal.execute(op,slot,&trial,true)) {
-	if (data.ancestorOpUse(maxancestor,vn,op,trial,0)) {
+	if (data.ancestorOpUse(maxancestor,vn,op,trial,0,0)) {
 	  trial.markActive();
 	  if (trial.hasCondExeEffect())
 	    activeinput.markNeedsFinalCheck();
@@ -5082,8 +5377,14 @@ void FuncCallSpecs::buildInputFromTrials(Funcdata &data)
   bool isspacebase;
   Varnode *vn;
   vector<Varnode *> newparam;
-  
+
   newparam.push_back(op->getIn(0)); // Preserve the fspec parameter
+
+  if (isDotdotdot() && isInputLocked()){
+      //if varargs, move the fixed args to the beginning of the list in order
+	  //preserve relative order of variable args
+	  activeinput.sortFixedPosition();
+  }
 
   for(int4 i=0;i<activeinput.getNumTrials();++i) {
     const ParamTrial &paramtrial( activeinput.getTrial(i) );
@@ -5348,3 +5649,5 @@ void FuncCallSpecs::countMatchingCalls(const vector<FuncCallSpecs *> &qlst)
   for(;lastChange<i;++lastChange)
     copyList[lastChange]->matchCallCount = num;
 }
+
+} // End namespace ghidra

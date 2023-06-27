@@ -15,9 +15,13 @@
  */
 #include "libdecomp.hh"
 
+namespace ghidra {
+
 void startDecompilerLibrary(const char *sleighhome)
 
 {
+  AttributeId::initialize();
+  ElementId::initialize();
   CapabilityPoint::initializeAll();
   ArchitectureCapability::sortCapabilities();
 
@@ -28,6 +32,8 @@ void startDecompilerLibrary(const char *sleighhome)
 void startDecompilerLibrary(const vector<string> &extrapaths)
 
 {
+  AttributeId::initialize();
+  ElementId::initialize();
   CapabilityPoint::initializeAll();
   ArchitectureCapability::sortCapabilities();
 
@@ -38,6 +44,8 @@ void startDecompilerLibrary(const vector<string> &extrapaths)
 void startDecompilerLibrary(const char *sleighhome,const vector<string> &extrapaths)
 
 {
+  AttributeId::initialize();
+  ElementId::initialize();
   CapabilityPoint::initializeAll();
   ArchitectureCapability::sortCapabilities();
 
@@ -53,3 +61,4 @@ void shutdownDecompilerLibrary(void)
 {
 }
 
+} // End namespace ghidra

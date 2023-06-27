@@ -16,14 +16,20 @@
 /// \file comment.hh
 /// \brief A database interface for high-level language comments
 
-#ifndef __CPUI_COMMENT__
-#define __CPUI_COMMENT__
+#ifndef __COMMENT_HH__
+#define __COMMENT_HH__
 
 #include "address.hh"
+
+namespace ghidra {
 
 class FlowBlock;
 class PcodeOp;
 class Funcdata;
+
+extern ElementId ELEM_COMMENT;			///< Marshaling element \<comment>
+extern ElementId ELEM_COMMENTDB;		///< Marshaling element \<commentdb>
+extern ElementId ELEM_TEXT;		///< Marshaling element \<text>
 
 /// \brief A comment attached to a specific function and code address
 ///
@@ -53,7 +59,7 @@ public:
     warningheader = 32		///< The comment is auto-generated and should be in the header
   };
   Comment(uint4 tp,const Address &fad,const Address &ad,int4 uq,const string &txt);	///< Constructor
-  Comment(void) {} 	///< Constructor for use with restoreXml
+  Comment(void) {} 	///< Constructor for use with decode
   void setEmitted(bool val) const { emitted = val; }		///< Mark that \b this comment has been emitted
   bool isEmitted(void) const { return emitted; }		///< Return \b true if \b this comment is already emitted
   uint4 getType(void) const { return type; }			///< Get the properties associated with the comment
@@ -61,8 +67,8 @@ public:
   const Address &getAddr(void) const { return addr; }		///< Get the address to which the instruction is attached
   int4 getUniq(void) const { return uniq; }			///< Get the sub-sorting index
   const string &getText(void) const { return text; }		///< Get the body of the comment
-  void saveXml(ostream &s) const;				///< Save the comment to an XML stream
-  void restoreXml(const Element *el,const AddrSpaceManager *manage);	///< Restore the comment from XML
+  void encode(Encoder &encoder) const;				///< Encode the comment to a stream
+  void decode(Decoder &decoder);				///< Restore the comment from XML
   static uint4 encodeCommentType(const string &name);		///< Convert name string to comment property
   static string decodeCommentType(uint4 val);			///< Convert comment property to string
 };
@@ -134,17 +140,16 @@ public:
   /// \return the ending iterator
   virtual CommentSet::const_iterator endComment(const Address &fad) const=0;
 
-  /// \brief Save all comments in the container to an XML stream
+  /// \brief Encode all comments in the container to a stream
   ///
-  /// Writes a \<commentdb> tag, with \<comment> sub-tags for each Comment object.
-  /// \param s is the output stream
-  virtual void saveXml(ostream &s) const=0;
+  /// Writes a \<commentdb> element, with \<comment> children for each Comment object.
+  /// \param encoder is the stream encoder
+  virtual void encode(Encoder &encoder) const=0;
 
-  /// \brief Restore all comments from XML
+  /// \brief Restore all comments from a \<commentdb> element
   ///
-  /// \param el is the root \<commentdb> element
-  /// \param manage is a manager for resolving address space references
-  virtual void restoreXml(const Element *el,const AddrSpaceManager *manage)=0;
+  /// \param decoder is the stream decoder
+  virtual void decode(Decoder &decoder)=0;
 };
 
 
@@ -166,8 +171,8 @@ public:
   virtual void deleteComment(Comment *com);
   virtual CommentSet::const_iterator beginComment(const Address &fad) const;
   virtual CommentSet::const_iterator endComment(const Address &fad) const;
-  virtual void saveXml(ostream &s) const;
-  virtual void restoreXml(const Element *el,const AddrSpaceManager *manage);
+  virtual void encode(Encoder &encoder) const;
+  virtual void decode(Decoder &decoder);
 };
 
 /// \brief A class for sorting comments into and within basic blocks
@@ -246,4 +251,5 @@ public:
   Comment *getNext(void) const { Comment *res=(*start).second; ++start; return res; }	///< Advance to the next comment
 };
 
+} // End namespace ghidra
 #endif

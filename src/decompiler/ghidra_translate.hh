@@ -16,11 +16,13 @@
 /// \file ghidra_translate.hh
 /// \brief Class for fetching p-code from a Ghidra client
 
-#ifndef __TRANSLATE_GHIDRA__
-#define __TRANSLATE_GHIDRA__
+#ifndef __GHIDRA_TRANSLATE_HH__
+#define __GHIDRA_TRANSLATE_HH__
 
 #include "translate.hh"
 #include "ghidra_arch.hh"
+
+namespace ghidra {
 
 /// \brief An implementation of Translate that queries a Ghidra client for p-code information
 ///
@@ -36,7 +38,7 @@ class GhidraTranslate : public Translate {
   mutable map<string,VarnodeData> nm2addr;	///< Mapping from register name to Varnode
   mutable map<VarnodeData,string> addr2nm;	///< Mapping rom Varnode to register name
   const VarnodeData &cacheRegister(const string &nm,const VarnodeData &data) const;
-  void restoreXml(const Element *el);		///< Initialize \b this Translate from XML
+  void decode(Decoder &decoder);		///< Initialize \b this Translate from a stream
 public:
   GhidraTranslate(ArchitectureGhidra *g) { glb = g; }	///< Constructor
 
@@ -53,4 +55,5 @@ public:
     throw LowlevelError("Cannot dump assembly through this interface"); }
 };
 
+} // End namespace ghidra
 #endif

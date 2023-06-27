@@ -16,9 +16,15 @@
  */
 /// \file bfd_arch.hh
 /// \brief Specific implementation of Architecture using GNU BFD libraries
+#ifndef __BFD_ARCH_HH__
+#define __BFD_ARCH_HH__
 
 #include "sleigh_arch.hh"
 #include "loadimage_bfd.hh"
+
+namespace ghidra {
+
+extern ElementId ELEM_BFD_SAVEFILE;	///< Marshaling element \<bfd_savefile>
 
 /// \brief Extension point for building a GNU BFD capable Architecture
 class BfdArchitectureCapability : public ArchitectureCapability {
@@ -40,8 +46,11 @@ class BfdArchitecture : public SleighArchitecture {
   virtual void resolveArchitecture(void);
   virtual void postSpecFile(void);
 public:
-  virtual void saveXml(ostream &s) const;
+  virtual void encode(Encoder &encoder) const;
   virtual void restoreXml(DocumentStorage &store);
   BfdArchitecture(const string &fname,const string &targ,ostream *estream);	///< Constructor
   virtual ~BfdArchitecture(void) {}
 };
+
+} // End namespace ghidra
+#endif

@@ -13,13 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __CPUI_MARSHAL__
-#define __CPUI_MARSHAL__
+#ifndef __MARSHAL_HH__
+#define __MARSHAL_HH__
 
 #include "xml.hh"
+#include <list>
 #include <unordered_map>
 
-using namespace std;
+namespace ghidra {
+
+using std::list;
+using std::unordered_map;
 
 /// \brief An annotation for a data element to being transferred to/from a stream
 ///
@@ -100,11 +104,6 @@ public:
   const AddrSpaceManager *getAddrSpaceManager(void) const { return spcManager; }	///< Get the manager used for address space decoding
   virtual ~Decoder(void) {}	///< Destructor
 
-  /// \brief Clear any current decoding state
-  ///
-  /// Allows the same decoder to be reused. Object is ready for new call to ingestStream.
-  virtual void clear(void)=0;
-
   /// \brief Prepare to decode a given stream
   ///
   /// Called once before any decoding.  Currently this is assumed to make an internal copy of the stream data,
@@ -155,6 +154,15 @@ public:
   /// \return the id of the next attribute or 0
   virtual uint4 getNextAttributeId(void)=0;
 
+  /// \brief Get the id for the (current) attribute, assuming it is indexed
+  ///
+  /// Assuming the previous call to getNextAttributeId() returned the id of ATTRIB_UNKNOWN,
+  /// reinterpret the attribute as being an indexed form of the given attribute. If the attribute
+  /// matches, return this indexed id, otherwise return ATTRIB_UNKNOWN.
+  /// \param attribId is the attribute being indexed
+  /// \return the indexed id or ATTRIB_UNKNOWN
+  virtual uint4 getIndexedAttributeId(const AttributeId &attribId)=0;
+
   /// \brief Reset attribute traversal for the current element
   ///
   /// Attributes for a single element can be traversed more than once using the getNextAttributeId method.
@@ -191,6 +199,29 @@ public:
   /// \param attribId is the specific attribute id to match
   /// \return the signed integer value
   virtual intb readSignedInteger(const AttributeId &attribId)=0;
+
+  /// \brief Parse the current attribute as either a signed integer value or a string.
+  ///
+  /// If the attribute is an integer, its value is returned. If the attribute is a string, it must match an
+  /// expected string passed to the method, and a predetermined integer value associated with the string is returned.
+  /// If the attribute neither matches the expected string nor is an integer, the return value is undefined.
+  /// \param expect is the string value to expect if the attribute is encoded as a string
+  /// \param expectval is the integer value to return if the attribute matches the expected string
+  /// \return the encoded integer or the integer value associated with the expected string
+  virtual intb readSignedIntegerExpectString(const string &expect,intb expectval)=0;
+
+  /// \brief Find and parse a specific attribute in the current element as either a signed integer or a string.
+  ///
+  /// If the attribute is an integer, its value is parsed and returned.
+  /// If the attribute is encoded as a string, it must match an expected string passed to this method.
+  /// In this case, a predetermined integer value is passed back, indicating a matching string was parsed.
+  /// If the attribute neither matches the expected string nor is an integer, the return value is undefined.
+  /// If there is no attribute matching the id, an exception is thrown.
+  /// \param attribId is the specific attribute id to match
+  /// \param expect is the string to expect, if the attribute is not encoded as an integer
+  /// \param expectval is the integer value to return if the attribute matches the expected string
+  /// \return the encoded integer or the integer value associated with the expected string
+  virtual intb readSignedIntegerExpectString(const AttributeId &attribId,const string &expect,intb expectval)=0;
 
   /// \brief Parse the current attribute as an unsigned integer value
   ///
@@ -232,7 +263,7 @@ public:
   /// \brief Find the specific attribute in the current element and return it as an address space
   ///
   /// Search attributes from the current element for a match to the given attribute id.
-  /// Return this attribute as an address space. If there is no attribute matching the id, an exception is throw.
+  /// Return this attribute as an address space. If there is no attribute matching the id, an exception is thrown.
   /// Parse via getNextAttributeId is reset.
   /// \param attribId is the specific attribute id to match
   /// \return the address space associated with the attribute
@@ -261,11 +292,6 @@ public:
 class Encoder {
 public:
   virtual ~Encoder(void) {}		///< Destructor
-
-  /// \brief Clear any state associated with the encoder
-  ///
-  /// The encoder should be ready to write a new document after this call.
-  virtual void clear(void)=0;
 
   /// \brief Begin a new element in the encoding
   ///
@@ -307,6 +333,17 @@ public:
   /// \param val is the string to encode
   virtual void writeString(const AttributeId &attribId,const string &val)=0;
 
+  /// \brief Write an annotated string, using an indexed attribute, into the encoding
+  ///
+  /// Multiple attributes with a shared name can be written to the same element by calling this method
+  /// multiple times with a different \b index value. The encoding will use attribute ids up to the base id
+  /// plus the maximum index passed in.  Implementors must be careful to not use other attributes with ids
+  /// bigger than the base id within the element taking the indexed attribute.
+  /// \param attribId is the shared AttributeId
+  /// \param index is the unique index to associated with the string
+  /// \param val is the string to encode
+  virtual void writeStringIndexed(const AttributeId &attribId,uint4 index,const string &val)=0;
+
   /// \brief Write an address space reference into the encoding
   ///
   /// The address space is associated with the given AttributeId annotation and the current open element.
@@ -332,8 +369,8 @@ public:
     document = (Document *)0; rootElement = root; attributeIndex = -1; }	///< Constructor with preparsed root
   XmlDecode(const AddrSpaceManager *spc) : Decoder(spc) {
     document = (Document *)0; rootElement = (const Element *)0; attributeIndex = -1; }	///< Constructor for use with ingestStream
+  const Element *getCurrentXmlElement(void) const { return elStack.back(); }	///< Get pointer to underlying XML element object
   virtual ~XmlDecode(void);
-  virtual void clear(void);
   virtual void ingestStream(istream &s);
   virtual uint4 peekElement(void);
   virtual uint4 openElement(void);
@@ -342,10 +379,13 @@ public:
   virtual void closeElementSkipping(uint4 id);
   virtual void rewindAttributes(void);
   virtual uint4 getNextAttributeId(void);
+  virtual uint4 getIndexedAttributeId(const AttributeId &attribId);
   virtual bool readBool(void);
   virtual bool readBool(const AttributeId &attribId);
   virtual intb readSignedInteger(void);
   virtual intb readSignedInteger(const AttributeId &attribId);
+  virtual intb readSignedIntegerExpectString(const string &expect,intb expectval);
+  virtual intb readSignedIntegerExpectString(const AttributeId &attribId,const string &expect,intb expectval);
   virtual uintb readUnsignedInteger(void);
   virtual uintb readUnsignedInteger(const AttributeId &attribId);
   virtual string readString(void);
@@ -364,15 +404,221 @@ class XmlEncode : public Encoder {
   bool elementTagIsOpen;		///< If \b true, new attributes can be written to the current element
 public:
   XmlEncode(ostream &s) : outStream(s) { elementTagIsOpen = false; } ///< Construct from a stream
-  virtual void clear(void) { elementTagIsOpen = false; }
   virtual void openElement(const ElementId &elemId);
   virtual void closeElement(const ElementId &elemId);
   virtual void writeBool(const AttributeId &attribId,bool val);
   virtual void writeSignedInteger(const AttributeId &attribId,intb val);
   virtual void writeUnsignedInteger(const AttributeId &attribId,uintb val);
   virtual void writeString(const AttributeId &attribId,const string &val);
+  virtual void writeStringIndexed(const AttributeId &attribId,uint4 index,const string &val);
   virtual void writeSpace(const AttributeId &attribId,const AddrSpace *spc);
 };
+
+/// \brief Protocol format for PackedEncode and PackedDecode classes
+///
+/// All bytes in the encoding are expected to be non-zero.  Element encoding looks like
+///   - 01xiiiii is an element start
+///   - 10xiiiii is an element end
+///   - 11xiiiii is an attribute start
+///
+/// Where iiiii is the (first) 5 bits of the element/attribute id.
+/// If x=0, the id is complete.  If x=1, the next byte contains 7 more bits of the id:  1iiiiiii
+///
+/// After an attribute start, there follows a \e type byte:  ttttllll, where the first 4 bits indicate the
+/// type of attribute and final 4 bits are a \b length \b code.  The types are:
+///   - 1 = boolean (lengthcode=0 for false, lengthcode=1 for true)
+///   - 2 = positive signed integer
+///   - 3 = negative signed integer (stored in negated form)
+///   - 4 = unsigned integer
+///   - 5 = basic address space (encoded as the integer index of the space)
+///   - 6 = special address space (lengthcode 0=>stack 1=>join 2=>fspec 3=>iop)
+///   - 7 = string
+///
+/// All attribute types except \e boolean and \e special, have an encoded integer after the \e type byte.
+/// The \b length \b code, indicates the number bytes used to encode the integer, 7-bits of info per byte, 1iiiiiii.
+/// A \b length \b code of zero is used to encode an integer value of 0, with no following bytes.
+///
+/// For strings, the integer encoded after the \e type byte, is the actual length of the string.  The
+/// string data itself is stored immediately after the length integer using UTF8 format.
+namespace PackedFormat {
+  static const uint1 HEADER_MASK = 0xc0;		///< Bits encoding the record type
+  static const uint1 ELEMENT_START = 0x40;		///< Header for an element start record
+  static const uint1 ELEMENT_END = 0x80;		///< Header for an element end record
+  static const uint1 ATTRIBUTE = 0xc0;			///< Header for an attribute record
+  static const uint1 HEADEREXTEND_MASK = 0x20;		///< Bit indicating the id extends into the next byte
+  static const uint1 ELEMENTID_MASK = 0x1f;		///< Bits encoding (part of) the id in the record header
+  static const uint1 RAWDATA_MASK = 0x7f;		///< Bits of raw data in follow-on bytes
+  static const int4 RAWDATA_BITSPERBYTE = 7;		///< Number of bits used in a follow-on byte
+  static const uint1 RAWDATA_MARKER = 0x80;		///< The unused bit in follow-on bytes. (Always set to 1)
+  static const int4 TYPECODE_SHIFT = 4;			///< Bit position of the type code in the type byte
+  static const uint1 LENGTHCODE_MASK = 0xf;		///< Bits in the type byte forming the length code
+  static const uint1 TYPECODE_BOOLEAN = 1;		///< Type code for the \e boolean type
+  static const uint1 TYPECODE_SIGNEDINT_POSITIVE = 2;	///< Type code for the \e signed \e positive \e integer type
+  static const uint1 TYPECODE_SIGNEDINT_NEGATIVE = 3;	///< Type code for the \e signed \e negative \e integer type
+  static const uint1 TYPECODE_UNSIGNEDINT = 4;		///< Type code for the \e unsigned \e integer type
+  static const uint1 TYPECODE_ADDRESSSPACE = 5;		///< Type code for the \e address \e space type
+  static const uint1 TYPECODE_SPECIALSPACE = 6;		///< Type code for the \e special \e address \e space type
+  static const uint1 TYPECODE_STRING = 7;		///< Type code for the \e string type
+  static const uint4 SPECIALSPACE_STACK = 0;		///< Special code for the \e stack space
+  static const uint4 SPECIALSPACE_JOIN = 1;		///< Special code for the \e join space
+  static const uint4 SPECIALSPACE_FSPEC = 2;		///< Special code for the \e fspec space
+  static const uint4 SPECIALSPACE_IOP = 3;		///< Special code for the \e iop space
+  static const uint4 SPECIALSPACE_SPACEBASE = 4;	///< Special code for a \e spacebase space
+}
+
+/// \brief A byte-based decoder designed to marshal info to the decompiler efficiently
+///
+/// The decoder expects an encoding as described in PackedFormat.  When ingested, the stream bytes are
+/// held in a sequence of arrays (ByteChunk). During decoding, \b this object maintains a Position in the
+/// stream at the start and end of the current open element, and a Position of the next attribute to read to
+/// facilitate getNextAttributeId() and associated read*() methods.
+class PackedDecode : public Decoder {
+public:
+  static const int4 BUFFER_SIZE;	///< The size, in bytes, of a single cached chunk of the input stream
+private:
+  /// \brief A bounded array of bytes
+  class ByteChunk {
+    friend class PackedDecode;
+    uint1 *start;			///< Start of the byte array
+    uint1 *end;				///< End of the byte array
+  public:
+    ByteChunk(uint1 *s,uint1 *e) { start = s; end = e; }	///< Constructor
+  };
+  /// \brief An iterator into input stream
+  class Position {
+    friend class PackedDecode;
+    list<ByteChunk>::const_iterator seqIter;	///< Current byte sequence
+    uint1 *current;				///< Current position in sequence
+    uint1 *end;					///< End of current sequence
+  };
+  list<ByteChunk> inStream;		///< Incoming raw data as a sequence of byte arrays
+  Position startPos;			///< Position at the start of the current open element
+  Position curPos;			///< Position of the next attribute as returned by getNextAttributeId
+  Position endPos;			///< Ending position after all attributes in current open element
+  bool attributeRead;			///< Has the last attribute returned by getNextAttributeId been read
+  uint1 getByte(Position &pos) { return *pos.current; }	///< Get the byte at the current position, do not advance
+  uint1 getBytePlus1(Position &pos);	///< Get the byte following the current byte, do not advance position
+  uint1 getNextByte(Position &pos);	///< Get the byte at the current position and advance to the next byte
+  void advancePosition(Position &pos,int4 skip);	///< Advance the position by the given number of bytes
+  uint8 readInteger(int4 len);		///< Read an integer from the \e current position given its length in bytes
+  uint4 readLengthCode(uint1 typeByte) { return ((uint4)typeByte & PackedFormat::LENGTHCODE_MASK); }	///< Extract length code from type byte
+  void findMatchingAttribute(const AttributeId &attribId);	///< Find attribute matching the given id in open element
+  void skipAttribute(void);		///< Skip over the attribute at the current position
+  void skipAttributeRemaining(uint1 typeByte);	///< Skip over remaining attribute data, after a mismatch
+public:
+  PackedDecode(const AddrSpaceManager *spcManager) : Decoder(spcManager) {}	///< Constructor
+  virtual ~PackedDecode(void);
+  virtual void ingestStream(istream &s);
+  virtual uint4 peekElement(void);
+  virtual uint4 openElement(void);
+  virtual uint4 openElement(const ElementId &elemId);
+  virtual void closeElement(uint4 id);
+  virtual void closeElementSkipping(uint4 id);
+  virtual void rewindAttributes(void);
+  virtual uint4 getNextAttributeId(void);
+  virtual uint4 getIndexedAttributeId(const AttributeId &attribId);
+  virtual bool readBool(void);
+  virtual bool readBool(const AttributeId &attribId);
+  virtual intb readSignedInteger(void);
+  virtual intb readSignedInteger(const AttributeId &attribId);
+  virtual intb readSignedIntegerExpectString(const string &expect,intb expectval);
+  virtual intb readSignedIntegerExpectString(const AttributeId &attribId,const string &expect,intb expectval);
+  virtual uintb readUnsignedInteger(void);
+  virtual uintb readUnsignedInteger(const AttributeId &attribId);
+  virtual string readString(void);
+  virtual string readString(const AttributeId &attribId);
+  virtual AddrSpace *readSpace(void);
+  virtual AddrSpace *readSpace(const AttributeId &attribId);
+};
+
+/// \brief A byte-based encoder designed to marshal from the decompiler efficiently
+///
+/// See PackedDecode for details of the encoding format.
+class PackedEncode : public Encoder {
+  ostream &outStream;			///< The stream receiving the encoded data
+  void writeHeader(uint1 header,uint4 id);	///< Write a header, element or attribute, to stream
+  void writeInteger(uint1 typeByte,uint8 val);	///< Write an integer value to the stream
+public:
+  PackedEncode(ostream &s) : outStream(s) {} ///< Construct from a stream
+  virtual void openElement(const ElementId &elemId);
+  virtual void closeElement(const ElementId &elemId);
+  virtual void writeBool(const AttributeId &attribId,bool val);
+  virtual void writeSignedInteger(const AttributeId &attribId,intb val);
+  virtual void writeUnsignedInteger(const AttributeId &attribId,uintb val);
+  virtual void writeString(const AttributeId &attribId,const string &val);
+  virtual void writeStringIndexed(const AttributeId &attribId,uint4 index,const string &val);
+  virtual void writeSpace(const AttributeId &attribId,const AddrSpace *spc);
+};
+
+/// An exception is thrown if the position currently points to the last byte in the stream
+/// \param pos is the position in the stream to look ahead from
+/// \return the next byte
+inline uint1 PackedDecode::getBytePlus1(Position &pos)
+
+{
+  uint1 *ptr = pos.current + 1;
+  if (ptr == pos.end) {
+    list<ByteChunk>::const_iterator iter = pos.seqIter;
+    ++iter;
+    if (iter == inStream.end())
+      throw DecoderError("Unexpected end of stream");
+    ptr = (*iter).start;
+  }
+  return *ptr;
+}
+
+/// An exception is thrown if there are no additional bytes in the stream
+/// \param pos is the position of the byte
+/// \return the byte at the current position
+inline uint1 PackedDecode::getNextByte(Position &pos)
+
+{
+  uint1 res = *pos.current;
+  pos.current += 1;
+  if (pos.current != pos.end)
+    return res;
+  ++pos.seqIter;
+  if (pos.seqIter == inStream.end())
+    throw DecoderError("Unexpected end of stream");
+  pos.current = (*pos.seqIter).start;
+  pos.end = (*pos.seqIter).end;
+  return res;
+}
+
+/// An exception is thrown of position is advanced past the end of the stream
+/// \param pos is the position being advanced
+/// \param skip is the number of bytes to advance
+inline void PackedDecode::advancePosition(Position &pos,int4 skip)
+
+{
+  while(pos.end - pos.current <= skip) {
+    skip -= (pos.end - pos.current);
+    ++pos.seqIter;
+    if (pos.seqIter == inStream.end())
+      throw DecoderError("Unexpected end of stream");
+    pos.current = (*pos.seqIter).start;
+    pos.end = (*pos.seqIter).end;
+  }
+  pos.current += skip;
+}
+
+/// \param header is the type of header
+/// \param id is the id associated with the element or attribute
+inline void PackedEncode::writeHeader(uint1 header,uint4 id)
+
+{
+  if (id > 0x1f) {
+    header |= PackedFormat::HEADEREXTEND_MASK;
+    header |= (id >> PackedFormat::RAWDATA_BITSPERBYTE);
+    uint1 extendByte = (id & PackedFormat::RAWDATA_MASK) | PackedFormat::RAWDATA_MARKER;
+    outStream.put(header);
+    outStream.put(extendByte);
+  }
+  else {
+    header |= id;
+    outStream.put(header);
+  }
+}
 
 extern ElementId ELEM_UNKNOWN;		///< Special element to represent an element with an unrecognized name
 extern AttributeId ATTRIB_UNKNOWN;	///< Special attribute  to represent an attribute with an unrecognized name
@@ -441,4 +687,5 @@ extern ElementId ELEM_VAL;		///< Marshaling element \<val>
 extern ElementId ELEM_VALUE;		///< Marshaling element \<value>
 extern ElementId ELEM_VOID;		///< Marshaling element \<void>
 
+} // End namespace ghidra
 #endif
