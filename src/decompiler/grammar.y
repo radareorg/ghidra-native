@@ -13,13 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+%define api.prefix {grammar}
 %{
 #include "grammar.hh"
 
-extern int yylex(void);
-extern int yyerror(const char *str);
+namespace ghidra {
+
+extern int grammarlex(void);
+extern int grammarerror(const char *str);
 static CParse *parse;
-extern int yydebug;
 %}
 
 %union {
@@ -1029,7 +1031,7 @@ Datatype *CParse::newStruct(const string &ident,vector<TypeDeclarator *> *declis
 { // Build a new structure
   TypeStruct *res = glb->types->getTypeStruct(ident); // Create stub (for recursion)
   vector<TypeField> sublist;
-  
+
   for(uint4 i=0;i<declist->size();++i) {
     TypeDeclarator *decl = (*declist)[i];
     if (!decl->isValid()) {
@@ -1037,12 +1039,10 @@ Datatype *CParse::newStruct(const string &ident,vector<TypeDeclarator *> *declis
       glb->types->destroyType(res);
       return (Datatype *)0;
     }
-    sublist.push_back(TypeField());
-    sublist.back().type = decl->buildType(glb);
-    sublist.back().name = decl->getIdentifier();
-    sublist.back().offset = -1;	// Let typegrp figure out offset
+    sublist.emplace_back(0,-1,decl->getIdentifier(),decl->buildType(glb));
   }
 
+  TypeStruct::assignFieldOffsets(sublist,glb->types->getStructAlign());
   if (!glb->types->setFields(sublist,res,-1,0)) {
     setError("Bad structure definition");
     glb->types->destroyType(res);
@@ -1063,15 +1063,34 @@ Datatype *CParse::oldStruct(const string &ident)
 Datatype *CParse::newUnion(const string &ident,vector<TypeDeclarator *> *declist)
 
 {
-  setError("Unions are currently unsupported");
-  return (Datatype *)0;
+  TypeUnion *res = glb->types->getTypeUnion(ident); // Create stub (for recursion)
+  vector<TypeField> sublist;
+  
+  for(uint4 i=0;i<declist->size();++i) {
+    TypeDeclarator *decl = (*declist)[i];
+    if (!decl->isValid()) {
+      setError("Invalid union declarator");
+      glb->types->destroyType(res);
+      return (Datatype *)0;
+    }
+    sublist.emplace_back(i,0,decl->getIdentifier(),decl->buildType(glb));
+  }
+
+  if (!glb->types->setFields(sublist,res,-1,0)) {
+    setError("Bad union definition");
+    glb->types->destroyType(res);
+    return (Datatype *)0;
+  }
+  return res;
 }
 
 Datatype *CParse::oldUnion(const string &ident)
 
 {
-  setError("Unions are currently unsupported");
-  return (Datatype *)0;
+  Datatype *res = glb->types->findByName(ident);
+  if ((res==(Datatype *)0)||(res->getMetatype() != TYPE_UNION))
+    setError("Identifier does not represent a union as required");
+  return res;
 }
 
 Enumerator *CParse::newEnumerator(const string &ident)
@@ -1312,13 +1331,13 @@ bool CParse::parseStream(istream &s,uint4 doctype)
   return runParse(doctype);
 }
 
-int yylex(void)
+int grammarlex(void)
 
 {
   return parse->lex();
 }
 
-int yyerror(const char *str)
+int grammarerror(const char *str)
 
 {
   return 0;
@@ -1389,10 +1408,18 @@ void parse_C(Architecture *glb,istream &s)
     Datatype *ct = decl->buildType(glb);
     if (decl->getIdentifier().size() == 0)
       throw ParseError("Missing identifier for typedef");
-    glb->types->setName(ct,decl->getIdentifier());
+    if (ct->getMetatype() == TYPE_STRUCT) {
+      glb->types->setName(ct,decl->getIdentifier());
+    }
+    else {
+      glb->types->getTypedef(ct,decl->getIdentifier(),0,0);
+    }
   }
   else if (decl->getBaseType()->getMetatype()==TYPE_STRUCT) {
     // We parsed a struct, treat as a typedef
+  }
+  else if (decl->getBaseType()->getMetatype()==TYPE_UNION) {
+    // We parsed a union, treat as a typedef
   }
   else if (decl->getBaseType()->isEnumType()) {
     // We parsed an enum, treat as a typedef
@@ -1542,3 +1569,4 @@ Address parse_machaddr(istream &s,int4 &defaultsize,const TypeFactory &typegrp,b
   return res;
 }
 
+} // End namespace ghidra

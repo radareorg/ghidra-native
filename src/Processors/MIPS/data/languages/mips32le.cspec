@@ -16,9 +16,7 @@
 
   <stackpointer register="sp" space="ram"/>
   <funcptr align="2"/>
-  <spacebase name="gp" register="gp" space="ram"/>
   <global>
-    <range space="gp"/>
     <range space="ram"/>
     <range space="register" first="0x2000" last="0x2fff"/>
   </global>
@@ -86,5 +84,23 @@
       </localrange>
     </prototype>
   </default_proto>
+  <prototype name="processEntry" extrapop="0" stackshift="0"> 
+      <input pointermax="4"> 
+        <pentry minsize="1" maxsize="4"> 
+          <register name="v0"/> 
+        </pentry> 
+        <pentry minsize="1" maxsize="500" align="4"> 
+          <addr offset="0" space="stack"/> 
+        </pentry> 
+      </input> 
+      <output killedbycall="true"> 
+        <pentry minsize="1" maxsize="4"> 
+          <register name="v0"/> 
+        </pentry> 
+      </output> 
+      <unaffected>
+        <register name="sp"/>
+      </unaffected>
+  </prototype> 
     
 </compiler_spec>

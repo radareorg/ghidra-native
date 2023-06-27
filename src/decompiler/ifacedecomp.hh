@@ -16,8 +16,8 @@
 /// \file ifacedecomp.hh
 /// \brief Console interface commands for the decompiler engine
 
-#ifndef __IFACE_DECOMP__
-#define __IFACE_DECOMP__
+#ifndef __IFACEDECOMP_HH__
+#define __IFACEDECOMP_HH__
 
 #include "graph.hh"
 #include "grammar.hh"
@@ -27,6 +27,8 @@
 #ifdef CPUI_RULECOMPILE
 #include "rulecompile.hh"
 #endif
+
+namespace ghidra {
 
 /// \brief Interface capability point for all decompiler commands
 class IfaceDecompCapability : public IfaceCapability {
@@ -59,6 +61,7 @@ public:
   void clearArchitecture(void);		///< Free all resources for the current architecture/program
   void followFlow(ostream &s,int4 size);
   Varnode *readVarnode(istream &s);	///< Read a varnode from the given stream
+  void readSymbol(const string &name,vector<Symbol *> &res);	///< Find a symbol by name
 };
 
 /// \brief Disassembly emitter that prints to a console stream
@@ -176,6 +179,11 @@ public:
 };
 
 class IfcMapconvert : public IfaceDecompCommand {
+public:
+  virtual void execute(istream &s);
+};
+
+class IfcMapunionfacet : public IfaceDecompCommand {
 public:
   virtual void execute(istream &s);
 };
@@ -317,6 +325,11 @@ public:
   virtual void execute(istream &s);
 };
 
+class IfcIsolate : public IfaceDecompCommand {
+public:
+  virtual void execute(istream &s);
+};
+
 class IfcPrintVarnode : public IfaceDecompCommand {
 public:
   virtual void execute(istream &s);
@@ -352,12 +365,12 @@ public:
   virtual void execute(istream &s);
 };
 
-class IfcForceHex : public IfaceDecompCommand {
+class IfcForceFormat : public IfaceDecompCommand {
 public:
   virtual void execute(istream &s);
 };
 
-class IfcForceDec : public IfaceDecompCommand {
+class IfcForceDatatypeFormat : public IfaceDecompCommand {
 public:
   virtual void execute(istream &s);
 };
@@ -525,6 +538,11 @@ public:
   virtual void execute(istream &s);
 };
 
+class IfcFixupApply : public IfaceDecompCommand {
+public:
+  virtual void execute(istream &s);
+};
+
 class IfcCountPcode : public IfaceDecompCommand {
 public:
   virtual void execute(istream &s);
@@ -640,4 +658,5 @@ public:
 
 #endif
 
+} // End namespace ghidra
 #endif

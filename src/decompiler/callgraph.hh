@@ -13,16 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __CPUI_CALLGRAPH__
-#define __CPUI_CALLGRAPH__
+#ifndef __CALLGRAPH_HH__
+#define __CALLGRAPH_HH__
 
 #include "address.hh"
+
+namespace ghidra {
 
 // Forward declarations
 class Architecture;
 class Funcdata;
 class CallGraphNode;
 class CallGraph;
+
+extern ElementId ELEM_CALLGRAPH;	///< Marshaling element \<callgraph>
+extern ElementId ELEM_NODE;		///< Marshaling element \<node>
 
 class CallGraphEdge {
 public:
@@ -41,9 +46,9 @@ private:
 public:
   CallGraphEdge(void) { flags = 0; }
   bool isCycle(void) const { return ((flags&1)!=0); }
-  void saveXml(ostream &s) const;
+  void encode(Encoder &encoder) const;
   const Address &getCallSiteAddr(void) const { return callsiteaddr; }
-  static void restoreXml(const Element *el,CallGraph *graph);
+  static void decode(Decoder &decoder,CallGraph *graph);
 };
 
 class CallGraphNode {
@@ -77,8 +82,8 @@ public:
   const CallGraphEdge &getOutEdge(int4 i) const { return outedge[i]; }
   CallGraphNode *getOutNode(int4 i) const { return outedge[i].to; }
   void setFuncdata(Funcdata *f);
-  void saveXml(ostream &s) const;
-  static void restoreXml(const Element *el,CallGraph *graph);
+  void encode(Encoder &encoder) const;
+  static void decode(Decoder &decoder,CallGraph *graph);
 };
 
 struct LeafIterator {
@@ -104,7 +109,6 @@ class CallGraph {
   void iterateFunctionsAddrOrder(Scope *scope);
 public:
   CallGraph(Architecture *g) { glb = g; }
-  Architecture *getArch(void) const { return glb; }
   CallGraphNode *addNode(Funcdata *f);
   CallGraphNode *addNode(const Address &addr,const string &nm);
   CallGraphNode *findNode(const Address &addr);
@@ -116,8 +120,9 @@ public:
   map<Address,CallGraphNode>::iterator end(void) { return graph.end(); }
   void buildAllNodes(void);
   void buildEdges(Funcdata *fd);
-  void saveXml(ostream &s) const;
-  void restoreXml(const Element *el);
+  void encode(Encoder &encoder) const;
+  void decoder(Decoder &decoder);
 };
 
+} // End namespace ghidra
 #endif

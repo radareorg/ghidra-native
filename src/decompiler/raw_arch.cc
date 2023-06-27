@@ -15,6 +15,10 @@
  */
 #include "raw_arch.hh"
 
+namespace ghidra {
+
+ElementId ELEM_RAW_SAVEFILE = ElementId("raw_savefile",237);
+
 // Constructing this object registers the capability
 RawBinaryArchitectureCapability RawBinaryArchitectureCapability::rawBinaryArchitectureCapability;
 
@@ -81,16 +85,15 @@ RawBinaryArchitecture::RawBinaryArchitecture(const string &fname,const string &t
   adjustvma = 0;
 }
 
-void RawBinaryArchitecture::saveXml(ostream &s) const
+void RawBinaryArchitecture::encode(Encoder &encoder) const
 
 {
-  s << "<raw_savefile";
-  saveXmlHeader(s);
-  a_v_u(s,"adjustvma",adjustvma);
-  s << ">\n";
-  types->saveXmlCoreTypes(s);
-  SleighArchitecture::saveXml(s);
-  s << "</raw_savefile>\n";
+  encoder.openElement(ELEM_RAW_SAVEFILE);
+  encodeHeader(encoder);
+  encoder.writeUnsignedInteger(ATTRIB_ADJUSTVMA, adjustvma);
+  types->encodeCoreTypes(encoder);
+  SleighArchitecture::encode(encoder);
+  encoder.closeElement(ELEM_RAW_SAVEFILE);
 }
 
 void RawBinaryArchitecture::restoreXml(DocumentStorage &store)
@@ -123,3 +126,5 @@ void RawBinaryArchitecture::restoreXml(DocumentStorage &store)
     SleighArchitecture::restoreXml(store);
   }
 }
+
+} // End namespace ghidra

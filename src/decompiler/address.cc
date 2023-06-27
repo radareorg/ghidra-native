@@ -16,6 +16,19 @@
 #include "address.hh"
 #include "translate.hh"
 
+namespace ghidra {
+
+AttributeId ATTRIB_FIRST = AttributeId("first",27);
+AttributeId ATTRIB_LAST = AttributeId("last",28);
+AttributeId ATTRIB_UNIQ = AttributeId("uniq",29);
+
+ElementId ELEM_ADDR = ElementId("addr",11);
+ElementId ELEM_RANGE = ElementId("range",12);
+ElementId ELEM_RANGELIST = ElementId("rangelist",13);
+ElementId ELEM_REGISTER = ElementId("register",14);
+ElementId ELEM_SEQNUM = ElementId("seqnum",15);
+ElementId ELEM_VARNODE = ElementId("varnode",16);
+
 ostream &operator<<(ostream &s,const SeqNum &sq)
 
 {
@@ -44,27 +57,30 @@ SeqNum::SeqNum(Address::mach_extreme ex) : pc(ex)
   uniq = (ex == Address::m_minimal) ? 0 : ~((uintm)0);
 }
 
-void SeqNum::saveXml(ostream &s) const
+void SeqNum::encode(Encoder &encoder) const
 
 {
-  s << "<seqnum";
-  pc.getSpace()->saveXmlAttributes(s,pc.getOffset());
-  a_v_u(s,"uniq",uniq);
-  s << "/>";
+  encoder.openElement(ELEM_SEQNUM);
+  pc.getSpace()->encodeAttributes(encoder,pc.getOffset());
+  encoder.writeUnsignedInteger(ATTRIB_UNIQ, uniq);
+  encoder.closeElement(ELEM_SEQNUM);
 }
 
-SeqNum SeqNum::restoreXml(const Element *el,const AddrSpaceManager *manage)
+SeqNum SeqNum::decode(Decoder &decoder)
 
 {
   uintm uniq = ~((uintm)0);
-  Address pc = Address::restoreXml(el,manage); // Recover address
-  for(int4 i=0;i<el->getNumAttributes();++i)
-    if (el->getAttributeName(i) == "uniq") {
-      istringstream s2(el->getAttributeValue(i)); // Recover unique (if present)
-      s2.unsetf(ios::dec | ios::hex | ios::oct);
-      s2 >> uniq;
+  uint4 elemId = decoder.openElement(ELEM_SEQNUM);
+  Address pc = Address::decode(decoder); // Recover address
+  for(;;) {
+    uint4 attribId = decoder.getNextAttributeId();
+    if (attribId == 0) break;
+    if (attribId == ATTRIB_UNIQ) {
+      uniq = decoder.readUnsignedInteger();
       break;
     }
+  }
+  decoder.closeElement(elemId);
   return SeqNum(pc,uniq);
 }
 
@@ -83,16 +99,6 @@ Address::Address(mach_extreme ex)
     base = (AddrSpace *) ~((uintp)0);
     offset = ~((uintb)0);
   }
-}
-
-/// \deprecated Convert this to the most basic physical address.
-/// This routine is only present for backward compatibility
-/// with SLED
-void Address::toPhysical(void)
-
-{ AddrSpace *phys = base->getContain();
-  if ((phys != (AddrSpace *)0)&&(base->getType()==IPTR_SPACEBASE))
-     base = phys;
 }
 
 /// Return \b true if the range starting at \b this extending the given number of bytes
@@ -180,36 +186,33 @@ bool Address::isContiguous(int4 sz,const Address &loaddr,int4 losz) const
 }
 
 /// If \b this is (originally) a \e join address, reevaluate it in terms of its new
-/// \e offset and \e siz, changing the space and offset if necessary.
+/// \e offset and \e size, changing the space and offset if necessary.
 /// \param size is the new size in bytes of the underlying object
 void Address::renormalize(int4 size) {
   if (base->getType() == IPTR_JOIN)
     base->getManager()->renormalizeJoinAddress(*this,size);
 }
 
-/// This is usually used to build an address from an \b \<addr\>
-/// tag, but it can be used to create an address from any tag
-/// with the appropriate attributes
+/// This is usually used to decode an address from an \b \<addr\>
+/// element, but any element can be used if it has the appropriate attributes
 ///    - \e space indicates the address space of the tag
 ///    - \e offset indicates the offset within the space
 ///
 /// or a \e name attribute can be used to recover an address
 /// based on a register name.
-/// \param el is the parsed tag
-/// \param manage is the address space manager for the program
+/// \param decoder is the stream decoder
 /// \return the resulting Address
-Address Address::restoreXml(const Element *el,const AddrSpaceManager *manage)
+Address Address::decode(Decoder &decoder)
 
 {
   VarnodeData var;
 
-  var.restoreXml(el,manage);
+  var.decode(decoder);
   return Address(var.space,var.offset);
 }
 
-/// This is usually used to build an address from an \b \<addr\>
-/// tag, but it can be used to create an address from any tag
-/// with the appropriate attributes
+/// This is usually used to decode an address from an \b \<addr\>
+/// element, but any element can be used if it has the appropriate attributes
 ///    - \e space indicates the address space of the tag
 ///    - \e offset indicates the offset within the space
 ///    - \e size indicates the size of an address range
@@ -217,18 +220,43 @@ Address Address::restoreXml(const Element *el,const AddrSpaceManager *manage)
 /// or a \e name attribute can be used to recover an address
 /// and size based on a register name. If a size is recovered
 /// it is stored in \e size reference.
-/// \param el is the parsed tag
-/// \param manage is the address space manager for the program
+/// \param decoder is the stream decoder
 /// \param size is the reference to any recovered size
 /// \return the resulting Address
-Address Address::restoreXml(const Element *el,const AddrSpaceManager *manage,int4 &size)
+Address Address::decode(Decoder &decoder,int4 &size)
 
 {
   VarnodeData var;
 
-  var.restoreXml(el,manage);
+  var.decode(decoder);
   size = var.size;
   return Address(var.space,var.offset);
+}
+
+Range::Range(const RangeProperties &properties,const AddrSpaceManager *manage)
+
+{
+  if (properties.isRegister) {
+    const Translate *trans = manage->getDefaultCodeSpace()->getTrans();
+    const VarnodeData &point(trans->getRegister(properties.spaceName));
+    spc = point.space;
+    first = point.offset;
+    last = (first-1) + point.size;
+    return;
+  }
+  spc = manage->getSpaceByName(properties.spaceName);
+  if (spc == (AddrSpace *)0)
+    throw LowlevelError("Undefined space: "+properties.spaceName);
+
+  if (spc == (AddrSpace *)0)
+    throw LowlevelError("No address space indicated in range tag");
+  first = properties.first;
+  last = properties.last;
+  if (!properties.seenLast) {
+    last = spc->getHighest();
+  }
+  if (first > spc->getHighest() || last > spc->getHighest() || last < first)
+    throw LowlevelError("Illegal range tag");
 }
 
 /// Get the last address +1, updating the space, or returning
@@ -259,48 +287,55 @@ void Range::printBounds(ostream &s) const
   s << hex << first << '-' << last;
 }
 
-/// Write this object to a stream as a \<range> tag.
-/// \param s is the output stream
-void Range::saveXml(ostream &s) const
+/// Encode \b this to a stream as a \<range> element.
+/// \param encoder is the stream encoder
+void Range::encode(Encoder &encoder) const
 
 {
-  s << "<range";
-  a_v(s,"space",spc->getName());
-  a_v_u(s,"first",first);
-  a_v_u(s,"last",last);
-  s << "/>\n";
+  encoder.openElement(ELEM_RANGE);
+  encoder.writeSpace(ATTRIB_SPACE, spc);
+  encoder.writeUnsignedInteger(ATTRIB_FIRST, first);
+  encoder.writeUnsignedInteger(ATTRIB_LAST, last);
+  encoder.closeElement(ELEM_RANGE);
 }
 
-/// Reconstruct this object from an XML \<range> element
-/// \param el is the XML element
-/// \param manage is the space manage for recovering AddrSpace objects
-void Range::restoreXml(const Element *el,const AddrSpaceManager *manage)
+/// Reconstruct this object from a \<range> or \<register> element
+/// \param decoder is the stream decoder
+void Range::decode(Decoder &decoder)
+
+{
+  uint4 elemId = decoder.openElement();
+  if (elemId != ELEM_RANGE && elemId != ELEM_REGISTER)
+    throw DecoderError("Expecting <range> or <register> element");
+  decodeFromAttributes(decoder);
+  decoder.closeElement(elemId);
+}
+
+/// Reconstruct from attributes that may not be part of a \<range> element.
+/// \param decoder is the stream decoder
+void Range::decodeFromAttributes(Decoder &decoder)
 
 {
   spc = (AddrSpace *)0;
   bool seenLast = false;
   first = 0;
   last = 0;
-  for(int4 i=0;i<el->getNumAttributes();++i) {
-    if (el->getAttributeName(i) == "space") {
-      spc = manage->getSpaceByName(el->getAttributeValue(i));
-      if (spc == (AddrSpace *)0)
-        throw LowlevelError("Undefined space: "+el->getAttributeValue(i));
+  for(;;) {
+    uint4 attribId = decoder.getNextAttributeId();
+    if (attribId == 0) break;
+    if (attribId == ATTRIB_SPACE) {
+      spc = decoder.readSpace();
     }
-    else if (el->getAttributeName(i) == "first") {
-      istringstream s(el->getAttributeValue(i));
-      s.unsetf(ios::dec | ios::hex | ios::oct);
-      s >> first;
+    else if (attribId == ATTRIB_FIRST) {
+      first = decoder.readUnsignedInteger();
     }
-    else if (el->getAttributeName(i) == "last") {
-      istringstream s(el->getAttributeValue(i));
-      s.unsetf(ios::dec | ios::hex | ios::oct);
-      s >> last;
+    else if (attribId == ATTRIB_LAST) {
+      last = decoder.readUnsignedInteger();
       seenLast = true;
     }
-    else if (el->getAttributeName(i) == "name") {
-      const Translate *trans = manage->getDefaultCodeSpace()->getTrans();
-      const VarnodeData &point(trans->getRegister(el->getAttributeValue(i)));
+    else if (attribId == ATTRIB_NAME) {
+      const Translate *trans = decoder.getAddrSpaceManager()->getDefaultCodeSpace()->getTrans();
+      const VarnodeData &point(trans->getRegister(decoder.readString()));
       spc = point.space;
       first = point.offset;
       last = (first-1) + point.size;
@@ -314,6 +349,31 @@ void Range::restoreXml(const Element *el,const AddrSpaceManager *manage)
   }
   if (first > spc->getHighest() || last > spc->getHighest() || last < first)
     throw LowlevelError("Illegal range tag");
+}
+
+void RangeProperties::decode(Decoder &decoder)
+
+{
+  uint4 elemId = decoder.openElement();
+  if (elemId != ELEM_RANGE && elemId != ELEM_REGISTER)
+    throw DecoderError("Expecting <range> or <register> element");
+  for(;;) {
+    uint4 attribId = decoder.getNextAttributeId();
+    if (attribId == 0) break;
+    if (attribId == ATTRIB_SPACE)
+      spaceName = decoder.readString();
+    else if (attribId == ATTRIB_FIRST)
+      first = decoder.readUnsignedInteger();
+    else if (attribId == ATTRIB_LAST) {
+      last = decoder.readUnsignedInteger();
+      seenLast = true;
+    }
+    else if (attribId == ATTRIB_NAME) {
+      spaceName = decoder.readString();
+      isRegister = true;
+    }
+  }
+  decoder.closeElement(elemId);
 }
 
 /// Insert a new Range merging as appropriate to maintain the disjoint cover
@@ -539,36 +599,32 @@ void RangeList::printBounds(ostream &s) const
   }
 }
 
-/// Serialize this object to an XML \<rangelist> tag
-/// \param s is the output stream
-void RangeList::saveXml(ostream &s) const
+/// Encode \b this as a \<rangelist> element
+/// \param encoder is the stream encoder
+void RangeList::encode(Encoder &encoder) const
 
 {
   set<Range>::const_iterator iter;
 
-  s << "<rangelist>\n";
+  encoder.openElement(ELEM_RANGELIST);
   for(iter=tree.begin();iter!=tree.end();++iter) {
-    (*iter).saveXml(s);
+    (*iter).encode(encoder);
   }
-  s << "</rangelist>\n";
+  encoder.closeElement(ELEM_RANGELIST);
 }
 
-/// Recover each individual disjoint Range for \b this RangeList as encoded
-/// in a \<rangelist> tag.
-/// \param el is the XML element
-/// \param manage is manager for retrieving address spaces
-void RangeList::restoreXml(const Element *el,const AddrSpaceManager *manage)
+/// Recover each individual disjoint Range for \b this RangeList.
+/// \param decoder is the stream decoder
+void RangeList::decode(Decoder &decoder)
 
 {
-  const List &list(el->getChildren());
-  List::const_iterator iter;
-
-  for(iter=list.begin();iter!=list.end();++iter) {
-    const Element *subel = *iter;
+  uint4 elemId = decoder.openElement(ELEM_RANGELIST);
+  while(decoder.peekElement() != 0) {
     Range range;
-    range.restoreXml(subel,manage);
+    range.decode(decoder);
     tree.insert(range);
   }
+  decoder.closeElement(elemId);
 }
 
 #ifdef UINTB4
@@ -610,45 +666,11 @@ uintb uintb_negate(uintb in,int4 size)
 uintb sign_extend(uintb in,int4 sizein,int4 sizeout)
 
 {
-  int4 signbit;
-  uintb mask;
-
-  signbit = sizein*8 - 1;
-  in &= calc_mask(sizein);
-  if (sizein >= sizeout) return in;
-  if ((in>>signbit) != 0) {
-    mask = calc_mask(sizeout);
-    uintb tmp = mask << signbit; // Split shift into two pieces
-    tmp = (tmp<<1) & mask;	// In case, everything is shifted out
-    in |= tmp;
-  }
-  return in;
-}
-
-/// Sign extend \b val starting at \b bit
-/// \param val is a reference to the value to be sign-extended
-/// \param bit is the index of the bit to extend from (0=least significant bit)
-void sign_extend(intb &val,int4 bit)
-
-{
-  intb mask = 0;
-  mask = (~mask)<<bit;
-  if (((val>>bit)&1)!=0)
-    val |= mask;
-  else
-    val &= (~mask);
-}
-
-/// Zero extend \b val starting at \b bit
-/// \param val is a reference to the value to be zero extended
-/// \param bit is the index of the bit to extend from (0=least significant bit)
-void zero_extend(intb &val,int4 bit)
-
-{
-  intb mask = 0;
-  mask = (~mask)<<bit;
-  mask <<= 1;
-  val &= (~mask);
+  intb sval = in;
+  sval <<= (sizeof(intb) - sizein) * 8;
+  uintb res = (uintb)(sval >> (sizeout - sizein) * 8);
+  res >>= (sizeof(uintb) - sizeout)*8;
+  return res;
 }
 
 /// Swap the least significant \b size bytes in \b val
@@ -937,3 +959,5 @@ int4 power2Divide(int4 n,uint8 divisor,uint8 &q,uint8 &r)
   }
   return 0;
 }
+
+} // End namespace ghidra

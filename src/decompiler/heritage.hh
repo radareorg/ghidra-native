@@ -17,10 +17,12 @@
 /// \file heritage.hh
 /// \brief Utilities for building Static Single Assignment (SSA) form 
 
-#ifndef __CPUI_HERITAGE__
-#define __CPUI_HERITAGE__
+#ifndef __HERITAGE_HH__
+#define __HERITAGE_HH__
 
 #include "block.hh"
+
+namespace ghidra {
 
 /// Container holding the stack system for the renaming algorithm.  Every disjoint address
 /// range (indexed by its initial address) maps to its own Varnode stack.
@@ -246,12 +248,15 @@ class Heritage {
   bool protectFreeStores(AddrSpace *spc,vector<PcodeOp *> &freeStores);
   bool discoverIndexedStackPointers(AddrSpace *spc,vector<PcodeOp *> &freeStores,bool checkFreeStores);
   void reprocessFreeStores(AddrSpace *spc,vector<PcodeOp *> &freeStores);
-  void guard(const Address &addr,int4 size,vector<Varnode *> &read,vector<Varnode *> &write,vector<Varnode *> &inputvars);
+  void guard(const Address &addr,int4 size,bool guardPerformed,
+	     vector<Varnode *> &read,vector<Varnode *> &write,vector<Varnode *> &inputvars);
   void guardInput(const Address &addr,int4 size,vector<Varnode *> &input);
   void guardCallOverlappingInput(FuncCallSpecs *fc,const Address &addr,const Address &transAddr,int4 size);
+  bool guardCallOverlappingOutput(FuncCallSpecs *fc,const Address &addr,int4 size,vector<Varnode *> &write);
   void guardCalls(uint4 fl,const Address &addr,int4 size,vector<Varnode *> &write);
   void guardStores(const Address &addr,int4 size,vector<Varnode *> &write);
   void guardLoads(uint4 fl,const Address &addr,int4 size,vector<Varnode *> &write);
+  void guardReturnsOverlapping(const Address &addr,int4 size);
   void guardReturns(uint4 fl,const Address &addr,int4 size,vector<Varnode *> &write);
   static void buildRefinement(vector<int4> &refine,const Address &addr,int4 size,const vector<Varnode *> &vnlist);
   void splitByRefinement(Varnode *vn,const Address &addr,const vector<int4> &refine,vector<Varnode *> &split);
@@ -263,7 +268,7 @@ class Heritage {
   void visitIncr(FlowBlock *qnode,FlowBlock *vnode);
   void calcMultiequals(const vector<Varnode *> &write);
   void renameRecurse(BlockBasic *bl,VariableStack &varstack);
-  void bumpDeadcodeDelay(Varnode *vn);
+  void bumpDeadcodeDelay(AddrSpace *spc);
   void placeMultiequals(void);
   void rename(void);
 public:
@@ -291,4 +296,5 @@ public:
   const LoadGuard *getStoreGuard(PcodeOp *op) const;	///< Get LoadGuard record associated with given PcodeOp
 };
 
+} // End namespace ghidra
 #endif

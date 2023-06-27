@@ -16,10 +16,17 @@
 /// \file loadimage_xml.hh
 /// \brief Support for programs stored using an XML schema
 
-#ifndef __LOADIMAGE_XML__
-#define __LOADIMAGE_XML__
+#ifndef __LOADIMAGE_XML_HH__
+#define __LOADIMAGE_XML_HH__
 
 #include "loadimage.hh"
+
+namespace ghidra {
+
+extern AttributeId ATTRIB_ARCH;		///< Marshaling attribute "arch"
+
+extern ElementId ELEM_BINARYIMAGE;	///< Marshaling element \<binaryimage>
+extern ElementId ELEM_BYTECHUNK;	///< Marshaling element \<bytechunk>
 
 /// \brief Implementation of the LoadImage interface using underlying data stored in an XML format
 ///
@@ -38,7 +45,7 @@ public:
   LoadImageXml(const string &f,const Element *el);	///< Constructor
   void open(const AddrSpaceManager *m);		///< Read XML tags into the containers
   void clear(void);				///< Clear out all the caches
-  void saveXml(ostream &s) const;		///< Save the image back out to an XML stream
+  void encode(Encoder &encoder) const;		///< Encode the image to a stream
   virtual ~LoadImageXml(void) { clear(); }
   virtual void loadFill(uint1 *ptr,int4 size,const Address &addr);
   virtual void openSymbols(void) const;
@@ -48,4 +55,5 @@ public:
   virtual void adjustVma(long adjust);
 };
 
+} // End namespace ghidra
 #endif
