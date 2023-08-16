@@ -86,14 +86,5 @@
 	    <register name="lr"/>
 	  </unaffected>
 	</prototype>
-
-   <callfixup name="testCallFixup">
-     <target name="fixme"/>
-       <pcode>
-         <body><![CDATA[
-           sp = sp + 4;
-         ]]></body>
-       </pcode>
-   </callfixup>
     
 </compiler_spec>
