@@ -59,8 +59,9 @@ sync-stm8:
 
 sync-hexagon:
 	git clone --depth=1 https://github.com/toshipiazza/ghidra-plugin-hexagon/
-	mkdir -p src/Processors/hexagon
-	cp ghidra-plugin-hexagon/Ghidra/Processors/Hexagon/data/languages/* src/Processors/hexagon
+	mkdir -p src/Processors/hexagon/data/languages
+	cp ghidra-plugin-hexagon/Ghidra/Processors/Hexagon/data/languages/* \
+		src/Processors/hexagon/data/languages
 	rm -rf ghidra-plugin-hexagon
 
 ghidra:
