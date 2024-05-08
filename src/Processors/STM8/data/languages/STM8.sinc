@@ -163,7 +163,7 @@ macro compare(a, b) {
 	local x = a - b;
 	flagNZ(x);
 }
-macro dec(a) {
+macro decr(a) {
 	$(CC_V) = sborrow(a, 1);
 	a = a - 1;
 	flagNZ(a);
@@ -348,7 +348,7 @@ define pcodeop __DebugBreak;
 :CALLF [Addr16DW]	is Pre92 & op0_8=0x8D ; Addr16DW {
 	local pc:3 = inst_next;
 	pushdw(pc);
-	call Addr16DW;
+	call [Addr16DW];
 }
 # -		1000 1110			HALT		Halt processor and clocks
 define pcodeop __Halt;
@@ -400,14 +400,18 @@ define pcodeop __WaitForEvent;
 	$(CC_C) = 1;
 }
 # -		1001 1010			RIM			Reset interrupt mask (enable interrupts)
+define pcodeop __EnableInterrupt;  
 :RIM				is Pre00 & op0_8=0x9A {
 	$(CC_I1) = 1;
 	$(CC_I0) = 0;
+	__EnableInterrupt();
 }
 # -		1001 1011			SIM			Set interrupt mask (disable interrupts)
+define pcodeop __DisableInterrupt;  
 :SIM				is Pre00 & op0_8=0x9B {
 	$(CC_I1) = 1;
 	$(CC_I0) = 1;
+	__DisableInterrupt();
 }
 # -		1001 1100			RVF			Reset (clear) overflow flag
 :RVF				is Pre00 & op0_8=0x9C {
@@ -729,11 +733,11 @@ OneOp: (Addr16B, Y)	is Pre90 & op4_4=0x4 & Y; Addr16B	{ local addr:$(RAM_W) = ze
 # 72	0101 opcode	addr16	OP addr16			16-bit address
 OneOp: Addr16B		is Pre72 & op4_4=0x5 ; Addr16B		{ export Addr16B; }
 # -/90	0110 opcode	addr8	OP (addr8,X/Y)		8-bit address plus X/Y
-OneOp: (val8u, X_Y)	is         op4_4=0x6 & X_Y ; val8u	{ local addr:$(RAM_W) = zext(X_Y) + val8u; export *:1 addr; }
+OneOp: (val8u, X_Y)	is         op4_4=0x6 & X_Y ; val8u	{ local addr:$(RAM_W) = zext(X_Y + val8u); export *:1 addr; }
 # 72	0110 opcode	addr16	OP ([addr16],X)		16-bit indirect address plus X
-OneOp: ([Addr16W], X) is Pre72 & op4_4=0x6 & X; Addr16W	{ local addr:$(RAM_W) = zext(X) + zext(Addr16W); export *:1 addr;  }
+OneOp: ([Addr16W], X) is Pre72 & op4_4=0x6 & X; Addr16W	{ local addr:$(RAM_W) = zext(X + Addr16W); export *:1 addr;  }
 # 92/91	0110 opcode	addr8	OP ([addr8],X/Y)	8-bit indirect address plus X/Y
-OneOp: ([Addr8W], X_Y_92) is op4_4=0x6 & X_Y_92; Addr8W	{ local addr:$(RAM_W) = zext(X_Y_92) + zext(Addr8W); export *:1 addr; }
+OneOp: ([Addr8W], X_Y_92) is op4_4=0x6 & X_Y_92; Addr8W	{ local addr:$(RAM_W) = zext(X_Y_92 + Addr8W); export *:1 addr; }
 # -/90	0111 opcode	-		OP (X/Y)			Indexed with no offset
 OneOp: (X_Y)		is           op4_4=0x7 & X_Y		{ export *:1 X_Y; }
 
@@ -834,10 +838,10 @@ OneOpW: X_Y			is           op4_4=0x5 & X_Y		{ export X_Y; }
 
 # prefix	0 mode 1010	operand		DEC operand	Decrement; N and Z set, carry unaffected
 :DEC OneOp		is op0_4=0xA ... & OneOp {
-	dec(OneOp);
+	decr(OneOp);
 }
 :DECW OneOpW	is op0_4=0xA & OneOpW {
-	dec(OneOpW);
+	decr(OneOpW);
 }
 
 # prefix	0 mode 1100	operand		INC operand	Increment; N and Z set, carry unaffected
@@ -965,11 +969,11 @@ TwoOp:	[Addr8W]	is Pre92 & op4_4=0xC ; Addr8W 			{ local ptr:$(RAM_W) = zext(Add
 # -/90	1101 opcode	addr16	OP (addr16,X/Y)		Indexed with 16-bit offset
 TwoOp:	(Addr16B, X_Y)	is op4_4=0xD & X_Y; Addr16B			{ local addr:$(RAM_W) = zext(X_Y) + &Addr16B; export *:1 addr; }
 # 72	1101 opcode	addr16	OP ([addr16],X)		16-bit indirect + X
-TwoOp:	([Addr16W], X) is Pre72 & op4_4=0xD & X; Addr16W	{ local addr:$(RAM_W) = zext(X) + zext(Addr16W); export *:1 addr;  }
+TwoOp:	([Addr16W], X) is Pre72 & op4_4=0xD & X; Addr16W	{ local addr:$(RAM_W) = zext(X + Addr16W); export *:1 addr;  }
 # 92/91	1101 opcode	addr16	OP ([addr8],X/Y)	8-bit indirect + X/Y
-TwoOp:	([Addr8W], X_Y_92) is op4_4=0xD & X_Y_92; Addr8W	{ local addr:$(RAM_W) = zext(X_Y_92) + zext(Addr8W); export *:1 addr;  }
+TwoOp:	([Addr8W], X_Y_92) is op4_4=0xD & X_Y_92; Addr8W	{ local addr:$(RAM_W) = zext(X_Y_92 + Addr8W); export *:1 addr;  }
 # -/90	1110 opcode	addr8	OP (addr8,X/Y)		Indexed with 8-bit offset
-TwoOp:	(val8u, X_Y) is op4_4=0xE & X_Y ; val8u				{ local addr:$(RAM_W) = zext(X_Y) + val8u; export *:1 addr; }
+TwoOp:	(val8u, X_Y) is op4_4=0xE & X_Y ; val8u				{ local addr:$(RAM_W) = zext(X_Y + val8u); export *:1 addr; }
 # -/90	1111 opcode			OP (X/Y)			Indexed with no offset
 TwoOp:	(X_Y)		is op4_4=0xF & X_Y						{ export *:1 X_Y; }
 
@@ -1055,11 +1059,11 @@ TwoOpW:	[Addr8W]		is Pre91 & op4_4=0xC ; Addr8W 		{ local ptr:$(RAM_W) = zext(Ad
 # -/90	1101 opcode	addr16	OP (addr16,X/Y)		Indexed with 16-bit offset
 TwoOpW: (Addr16W, X_Y)	is op4_4=0xD & X_Y; Addr16W			{ local addr:$(RAM_W) = zext(X_Y) + &Addr16W; export *:2 addr; }
 # 72	1101 opcode	addr16	OP ([addr16],X)		16-bit indirect + X
-TwoOpW: ([Addr16W], X)	is Pre72 & op4_4=0xD & X; Addr16W	{ local addr:$(RAM_W) = zext(X) + zext(Addr16W); export *:2 addr;  }
+TwoOpW: ([Addr16W], X)	is Pre72 & op4_4=0xD & X; Addr16W	{ local addr:$(RAM_W) = zext(X + Addr16W); export *:2 addr;  }
 # 92/91	1101 opcode	addr16	OP ([addr8],X/Y)	8-bit indirect + X/Y
-TwoOpW: ([Addr8W], X_Y_92) is op4_4=0xD & X_Y_92; Addr8W	{ local addr:$(RAM_W) = zext(X_Y_92) + zext(Addr8W); export *:2 addr;  }
+TwoOpW: ([Addr8W], X_Y_92) is op4_4=0xD & X_Y_92; Addr8W	{ local addr:$(RAM_W) = zext(X_Y_92 + Addr8W); export *:2 addr;  }
 # -/90	1110 opcode	addr8	OP (addr8,X/Y)		Indexed with 8-bit offset
-TwoOpW: (val8u, X_Y)	is op4_4=0xE & X_Y ; val8u			{ local addr:$(RAM_W) = zext(X_Y) + val8u; export *:2 addr; }
+TwoOpW: (val8u, X_Y)	is op4_4=0xE & X_Y ; val8u			{ local addr:$(RAM_W) = zext(X_Y + val8u); export *:2 addr; }
 # -/90	1111 opcode			OP (X/Y)			Indexed with no offset
 TwoOpW: (X_Y)			is op4_4=0xF & X_Y					{ export *:2 X_Y; }
 

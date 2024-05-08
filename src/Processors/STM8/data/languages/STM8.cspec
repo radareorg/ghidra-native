@@ -4,12 +4,16 @@
 	<global>
 		<range space="RAM"/>
 	</global>
+	<data_organization>
+		<absolute_max_alignment value="0" />
+		<machine_alignment value="1" />
+		<default_alignment value="1" />
+		<pointer_size value="2" />
+	</data_organization>
+
 	<stackpointer register="SP" space="RAM"/>
-	<returnaddress>
-		<varnode space="stack" offset="1" size="2"/> <!-- can be 3 for CALLF/RETF -->
-	</returnaddress>
 	<default_proto>
-		<prototype name="__stdcall" extrapop="2" stackshift="2">
+		<prototype name="__stdcall" extrapop="2" stackshift="2" strategy="register">
 			<input>
 				<pentry maxsize="1" minsize="1">
 					<register name="A"/>
@@ -43,4 +47,40 @@
 			</killedbycall>
 		</prototype>
 	</default_proto>
+
+		<prototype name="__farcall" extrapop="3" stackshift="3" strategy="register">
+			<input>
+				<pentry maxsize="1" minsize="1">
+					<register name="A"/>
+				</pentry>
+				<pentry maxsize="2" minsize="2">
+					<register name="X"/>
+				</pentry>
+				<!--- rarely used?
+				<pentry maxsize="2" minsize="2">
+					<register name="Y"/>
+				</pentry> -->
+				<pentry maxsize="500" minsize="1" align="1">
+					<addr space="stack" offset="3"/>
+				</pentry>
+			</input>
+			<output>
+				<pentry minsize="1" maxsize="1">
+					<register name="A"/>
+				</pentry>
+				<pentry minsize="2" maxsize="2">
+					<register name="X"/>
+				</pentry>
+			</output>
+			<unaffected>
+				<register name="SP"/>
+			</unaffected>
+			<killedbycall>
+				<register name="A"/>
+				<register name="X"/>
+				<register name="CC"/>
+			</killedbycall>
+		</prototype>
+
+
 </compiler_spec>
