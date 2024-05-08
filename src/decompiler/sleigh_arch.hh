@@ -120,6 +120,7 @@ protected:
   virtual Translate *buildTranslator(DocumentStorage &store);
   virtual PcodeInjectLibrary *buildPcodeInjectLibrary(void);
   virtual void buildTypegrp(DocumentStorage &store);
+  virtual void buildCoreTypes(DocumentStorage &store);
   virtual void buildCommentDB(DocumentStorage &store);
   virtual void buildStringManager(DocumentStorage &store);
   virtual void buildConstantPool(DocumentStorage &store);
@@ -139,7 +140,7 @@ public:
   virtual string getDescription(void) const;
 
   static string normalizeProcessor(const string &nm);		///< Try to recover a \e language \e id processor field
-  static string normalizeEndian(const string &nm);		///< Try to recover a \e language \e id endianess field
+  static string normalizeEndian(const string &nm);		///< Try to recover a \e language \e id endianness field
   static string normalizeSize(const string &nm);		///< Try to recover a \e language \e id size field
   static string normalizeArchitecture(const string &nm);	///< Try to recover a \e language \e id string
   static void scanForSleighDirectories(const string &rootpath);

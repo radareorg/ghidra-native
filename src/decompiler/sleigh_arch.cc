@@ -199,8 +199,14 @@ PcodeInjectLibrary *SleighArchitecture::buildPcodeInjectLibrary(void)
 void SleighArchitecture::buildTypegrp(DocumentStorage &store)
 
 {
-  const Element *el = store.getTag("coretypes");
   types = new TypeFactory(this); // Initialize the object
+}
+
+void SleighArchitecture::buildCoreTypes(DocumentStorage &store)
+
+{
+  const Element *el = store.getTag("coretypes");
+
   if (el != (const Element *)0) {
     XmlDecode decoder(this,el);
     types->decodeCoreTypes(decoder);
@@ -350,8 +356,11 @@ void SleighArchitecture::buildSpecFile(DocumentStorage &store)
   
   specpaths.findFile(processorfile,language.getProcessorSpec());
   specpaths.findFile(compilerfile,compilertag.getSpec());
-  if (!language_reuse)
+  if (!language_reuse) {
     specpaths.findFile(slafile,language.getSlaFile());
+    if (slafile.empty())
+      throw SleighError("Could not find .sla file for " + archid);
+  }
   
   try {
     Document *doc = store.openDocument(processorfile);
@@ -388,15 +397,10 @@ void SleighArchitecture::buildSpecFile(DocumentStorage &store)
   }
 
   if (!language_reuse) {
+    istringstream s("<sleigh>" + slafile + "</sleigh>");
     try {
-      Document *doc = store.openDocument(slafile);
+      Document *doc = store.parseDocument(s);
       store.registerTag(doc->getRoot());
-    }
-    catch(DecoderError &err) {
-      ostringstream serr;
-      serr << "XML error parsing SLEIGH file: " << slafile;
-      serr << "\n " << err.explain;
-      throw SleighError(serr.str());
     }
     catch(LowlevelError &err) {
       ostringstream serr;

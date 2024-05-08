@@ -236,10 +236,12 @@ public:
   void setPrototype(const PrototypePieces &pieces);	///< Set the prototype for a particular function
   void setPrintLanguage(const string &nm);		///< Establish a particular output language
   void globalify(void);					///< Mark \e all spaces as global
-  void decodeFlowOverride(Decoder &decoder);		///< Set flow overrides from XML
+  void decodeFlowOverride(Decoder &decoder);		///< Decode flow overrides from a stream
   virtual ~Architecture(void);				///< Destructor
 
-  virtual string getDescription(void) const { return archid; }	///< Get a string describing \b this architecture
+  /// \brief Get a string describing \b this architecture
+  /// \return the description
+  virtual string getDescription(void) const { return archid; }
 
   /// \brief Print an error message to console
   ///
@@ -283,10 +285,15 @@ protected:
   /// \brief Build the data-type factory/container
   ///
   /// Build the TypeFactory object specific to \b this Architecture and
-  /// prepopulate it with the \e core types. Core types may be pulled
-  /// from the configuration information, or default core types are used.
+  /// prepopulate it with the \e core types.
   /// \param store contains possible configuration information
   virtual void buildTypegrp(DocumentStorage &store)=0;
+
+  /// \brief Add core primitive data-types
+  ///
+  /// Core types may be pulled from the configuration information, or default core types are used.
+  /// \param store contains possible configuration information
+  virtual void buildCoreTypes(DocumentStorage &store)=0;
 
   /// \brief Build the comment database
   ///

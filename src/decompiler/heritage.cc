@@ -331,20 +331,17 @@ bool Heritage::callOpIndirectEffect(const Address &addr,int4 size,PcodeOp *op) c
 /// of the address range currently being linked, create a Varnode of
 /// the correct size and define the original Varnode as a SUBPIECE.
 /// \param vn is the given too small Varnode
+/// \param op is the reading PcodeOp
 /// \param addr is the start of the (larger) range
 /// \param size is the number of bytes in the range
 /// \return the new larger Varnode
-Varnode *Heritage::normalizeReadSize(Varnode *vn,const Address &addr,int4 size)
+Varnode *Heritage::normalizeReadSize(Varnode *vn,PcodeOp *op,const Address &addr,int4 size)
 
 {
   int4 overlap;
   Varnode *vn1,*vn2;
-  PcodeOp *op,*newop;
+  PcodeOp *newop;
 
-  list<PcodeOp *>::const_iterator oiter = vn->beginDescend();
-  op = *oiter++;
-  if (oiter != vn->endDescend())
-    throw LowlevelError("Free varnode with multiple reads");
   newop = fd->newOp(2,op->getAddr());
   fd->opSetOpcode(newop,CPUI_SUBPIECE);
   vn1 = fd->newVarnode(size,addr);
@@ -1122,8 +1119,14 @@ void Heritage::guard(const Address &addr,int4 size,bool guardPerformed,
 
   for(iter=read.begin();iter!=read.end();++iter) {
     vn = *iter;
+    list<PcodeOp *>::const_iterator oiter = vn->beginDescend();
+    if (oiter == vn->endDescend())	// removeRevisitedMarkers may have eliminated descendant
+      continue;
+    PcodeOp *op = *oiter++;
+    if (oiter != vn->endDescend())
+      throw LowlevelError("Free varnode with multiple reads");
     if (vn->getSize() < size)
-      *iter = vn = normalizeReadSize(vn,addr,size);
+      *iter = vn = normalizeReadSize(vn,op,addr,size);
     vn->setActiveHeritage();
   }
 
@@ -1238,7 +1241,7 @@ void Heritage::guardOutputOverlap(PcodeOp *callOp,const Address &addr,int4 size,
 ///
 /// \param fc is the call site potentially returning a value
 /// \param addr is the starting address of the range
-/// \param addr is the starting address of the range relative to the callee
+/// \param transAddr is the starting address of the range relative to the callee
 /// \param size is the size of the range in bytes
 /// \param write is the set of new written Varnodes
 /// \return \b true if the INDIRECTs were created
@@ -1423,7 +1426,8 @@ void Heritage::guardCalls(uint4 fl,const Address &addr,int4 size,vector<Varnode 
       ParamActive *active = fc->getActiveOutput();
       int4 outputCharacter = fc->characterizeAsOutput(transAddr, size);
       if (outputCharacter != ParamEntry::no_containment) {
-	effecttype = EffectRecord::killedbycall; // A potential output is always killed by call
+	if (effecttype != EffectRecord::killedbycall && fc->isAutoKillByCall())
+	  effecttype = EffectRecord::killedbycall;
 	if (outputCharacter == ParamEntry::contained_by) {
 	  if (tryOutputOverlapGuard(fc, addr, transAddr, size, write))
 	    effecttype = EffectRecord::unaffected;	// Range is handled, don't do additional guarding
@@ -2065,11 +2069,9 @@ void Heritage::splitJoinRead(Varnode *vn,JoinRecord *joinrec)
 
 {
   PcodeOp *op = vn->loneDescend(); // vn isFree, so loneDescend must be non-null
-  bool preventConstCollapse = false;
+  bool isPrimitive = true;
   if (vn->isTypeLock()) {
-    type_metatype meta = vn->getType()->getMetatype();
-    if (meta == TYPE_STRUCT || meta == TYPE_ARRAY)
-      preventConstCollapse = true;
+    isPrimitive = vn->getType()->isPrimitiveWhole();
   }
   
   vector<Varnode *> lastcombo;
@@ -2090,10 +2092,13 @@ void Heritage::splitJoinRead(Varnode *vn,JoinRecord *joinrec)
       fd->opSetInput(concat,mosthalf,0);
       fd->opSetInput(concat,leasthalf,1);
       fd->opInsertBefore(concat,op);
-      if (preventConstCollapse)
+      if (isPrimitive) {
+	mosthalf->setPrecisHi();	// Set precision flags to trigger "double precision" rules
+	leasthalf->setPrecisLo();
+      }
+      else {
 	fd->opMarkNoCollapse(concat);
-      mosthalf->setPrecisHi();	// Set precision flags to trigger "double precision" rules
-      leasthalf->setPrecisLo();
+      }
       op = concat;		// Keep -op- as the earliest op in the concatenation construction
     }
 
@@ -2118,6 +2123,9 @@ void Heritage::splitJoinWrite(Varnode *vn,JoinRecord *joinrec)
 {
   PcodeOp *op = vn->getDef();	// vn cannot be free, either it has def, or it is input
   BlockBasic *bb = (BlockBasic *)fd->getBasicBlocks().getBlock(0);
+  bool isPrimitive = true;
+  if (vn->isTypeLock())
+    isPrimitive = vn->getType()->isPrimitiveWhole();
 
   vector<Varnode *> lastcombo;
   vector<Varnode *> nextlev;
@@ -2151,8 +2159,10 @@ void Heritage::splitJoinWrite(Varnode *vn,JoinRecord *joinrec)
       fd->opSetInput(split,curvn,0);
       fd->opSetInput(split,fd->newConstant(4,0),1);
       fd->opInsertAfter(split,op);
-      mosthalf->setPrecisHi();	// Make sure we set the precision flags to trigger "double precision" rules
-      leasthalf->setPrecisLo();
+      if (isPrimitive) {
+	mosthalf->setPrecisHi();	// Make sure we set the precision flags to trigger "double precision" rules
+	leasthalf->setPrecisLo();
+      }
       op = split;		// Keep -op- as the latest op in the split construction
     }
 
