@@ -20,7 +20,7 @@ massage:
 	git reset --hard
 	for a in $(shell ls patches/*.patch | sort -n) ; do echo "patch -p1 < $$a" ; patch -p1 < $$a ; git diff > /tmp/$$a ; git reset --hard ; done
 	mv /tmp/patches/* patches
-	
+
 
 sync-ghidra ghidra-sync sync-decompiler decompiler-sync: ghidra
 	rm -rf src/decompiler
@@ -44,6 +44,13 @@ sync-processors processors-sync: ghidra
 	$(MAKE) sync-stm8
 	$(MAKE) sync-hexagon
 	$(MAKE) sync-wasm
+	$(MAKE) sync-sbpf
+
+sync-sbpf:
+	rm -rf ghidra_sBPF
+	git clone https://github.com/daog1/ghidra_sbpf
+	mkdir -p src/Processors/sBPF
+	cp -rf ghidra_sbpf/* src/Processors/sBPF
 
 sync-wasm:
 	rm -rf ghidra_wasm
