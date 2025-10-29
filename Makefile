@@ -48,9 +48,9 @@ sync-processors processors-sync: ghidra
 
 sync-sbpf:
 	rm -rf ghidra_sBPF
-	git clone https://github.com/daog1/ghidra-native ghidra_sBPF
+	git clone https://github.com/daog1/ghidra_sbpf
 	mkdir -p src/Processors/sBPF
-	cp -rf ghidra_sBPF/src/Processors/sBPF/* src/Processors/sBPF
+	cp -rf ghidra_sbpf/* src/Processors/sBPF
 
 sync-wasm:
 	rm -rf ghidra_wasm
