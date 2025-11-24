@@ -11,7 +11,7 @@ jobs:
   dist-zip:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Extract r2g version
         run: echo "##[set-output name=version;]$( cat VERSION )"
         id: r2gv
@@ -25,19 +25,19 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Patching
         run: make patch
   build-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Patching
         run: make patch
 #  build-windows:
 #    runs-on: windows-latest
 #    steps:
-#    - uses: actions/checkout@v5
+#    - uses: actions/checkout@v6
 #    - name: Windows Dependencies
 #      run: pip install meson ninja
 #    - name: Building Sdb
