@@ -18,7 +18,7 @@ jobs:
       - name: Distribution Zip
         run: make dist
       - name: Pub
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ghidra-native-${{ steps.r2gv.outputs.version }}.zip
           path: ghidra-native-${{ steps.r2gv.outputs.version }}.zip
@@ -43,6 +43,6 @@ jobs:
 #    - name: Building Sdb
 #      run: meson build && ninja -C build
 #    - name: Pub
-#      uses: actions/upload-artifact@v5
+#      uses: actions/upload-artifact@v6
 #      with:
 #        path: build/*.exe
