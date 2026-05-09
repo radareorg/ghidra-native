@@ -1,3 +1,0 @@
-@define ENDIAN "big"
-
-@include "eBPF.sinc"

@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * 
  *      http://www.apache.org/licenses/LICENSE-2.0
- *
+ * 
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -178,75 +178,6 @@ SubtableSymbol *WithBlock::getCurrentSubtable(const list<WithBlock> &stack)
       return (*iter).ss;
   }
   return (SubtableSymbol *)0;
-}
-
-void ConsistencyChecker::OptimizeRecord::copyFromExcludingSize(ConsistencyChecker::OptimizeRecord &that)
-
-{
-  this->writeop = that.writeop;
-  this->readop = that.readop;
-  this->inslot = that.inslot;
-  this->writecount = that.writecount;
-  this->readcount = that.readcount;
-  this->writesection = that.writesection;
-  this->readsection = that.readsection;
-  this->opttype = that.opttype;
-}
-
-void ConsistencyChecker::OptimizeRecord::update(int4 opIdx, int4 slotIdx, int4 secNum)
-
-{
-  if (slotIdx >= 0) {
-    updateRead(opIdx, slotIdx, secNum);
-  }
-  else {
-    updateWrite(opIdx, secNum);
-  }
-}
-
-void ConsistencyChecker::OptimizeRecord::updateRead(int4 i, int4 inslot, int4 secNum)
-
-{
-  this->readop = i;
-  this->readcount++;
-  this->inslot = inslot;
-  this->readsection = secNum;
-}
-
-void ConsistencyChecker::OptimizeRecord::updateWrite(int4 i, int4 secNum)
-
-{
-  this->writeop = i;
-  this->writecount++;
-  this->writesection = secNum;
-}
-
-void ConsistencyChecker::OptimizeRecord::updateExport()
-
-{
-  this->writeop = 0;
-  this->readop = 0;
-  this->writecount = 2;
-  this->readcount = 2;
-  this->readsection = -2;
-  this->writesection = -2;
-}
-
-void ConsistencyChecker::OptimizeRecord::updateCombine(ConsistencyChecker::OptimizeRecord &that)
-
-{
-  if (that.writecount != 0) {
-    this->writeop = that.writeop;
-    this->writesection = that.writesection;
-  }
-  if (that.readcount != 0) {
-    this->readop = that.readop;
-    this->inslot = that.inslot;
-    this->readsection = that.readsection;
-  }
-  this->writecount += that.writecount;
-  this->readcount += that.readcount;
-  // opttype is not relevant here
 }
 
 /// \brief Construct the consistency checker and optimizer
@@ -1198,90 +1129,6 @@ void ConsistencyChecker::setPostOrder(SubtableSymbol *root)
   }
 }
 
-map<uintb,ConsistencyChecker::OptimizeRecord>::iterator ConsistencyChecker::UniqueState::lesserIter(uintb offset)
-
-{
-  if (recs.begin() == recs.end()) {
-    return recs.end();
-  }
-  map<uintb,OptimizeRecord>::iterator iter;
-  iter = recs.lower_bound(offset);
-  if (iter == recs.begin()) {
-    return recs.end();
-  }
-  return std::prev(iter);
-}
-
-ConsistencyChecker::OptimizeRecord ConsistencyChecker::UniqueState::coalesce(vector<ConsistencyChecker::OptimizeRecord*> &records)
-
-{
-  uintb minOff = -1;
-  uintb maxOff = -1;
-  vector<OptimizeRecord*>::iterator iter;
-
-  for (iter = records.begin(); iter != records.end(); ++iter) {
-    if (minOff == -1 || (*iter)->offset < minOff) {
-      minOff = (*iter)->offset;
-    }
-    if (maxOff == -1 || (*iter)->offset + (*iter)->size > maxOff) {
-      maxOff = (*iter)->offset + (*iter)->size;
-    }
-  }
-
-  OptimizeRecord result(minOff, maxOff - minOff);
-
-  for (iter = records.begin(); iter != records.end(); ++iter) {
-    result.updateCombine(**iter);
-  }
-
-  return result;
-}
-
-void ConsistencyChecker::UniqueState::set(uintb offset, int4 size, OptimizeRecord &rec)
-
-{
-  vector<OptimizeRecord*> records;
-  getDefinitions(records, offset, size);
-  records.push_back(&rec);
-  OptimizeRecord coalesced = coalesce(records);
-  recs.erase(recs.lower_bound(coalesced.offset), recs.lower_bound(coalesced.offset+coalesced.size));
-  recs.insert(pair<uint4,OptimizeRecord>(coalesced.offset, coalesced));
-}
-
-void ConsistencyChecker::UniqueState::getDefinitions(vector<ConsistencyChecker::OptimizeRecord*> &result, uintb offset, int4 size)
-
-{
-  if (size == 0) {
-    size = 1;
-  }
-  map<uintb,OptimizeRecord>::iterator iter;
-  iter = lesserIter(offset);
-  uintb cursor = offset;
-  if (iter != recs.end() && endOf(iter) > offset) {
-    OptimizeRecord &preRec = iter->second;
-    cursor = endOf(iter);
-    result.push_back(&preRec);
-  }
-  uintb end = offset + size;
-  iter = recs.lower_bound(offset);
-  while (iter != recs.end() && iter->first < end) {
-    if (iter->first > cursor) {
-      // The iterator becomes invalid with this insertion, so take the new one.
-      iter = recs.insert(pair<uint4,OptimizeRecord>(cursor,OptimizeRecord(cursor, iter->first - cursor))).first;
-      result.push_back(&iter->second);
-      iter++; // Put the (now valid) iterator back to where it was.
-    }
-    // No need to truncate, as we're just counting a read
-    result.push_back(&iter->second);
-    cursor = endOf(iter);
-    iter++;
-  }
-  if (end > cursor) {
-    iter = recs.insert(pair<uint4,OptimizeRecord>(cursor,OptimizeRecord(cursor, end - cursor))).first;
-    result.push_back(&iter->second);
-  }
-}
-
 /// \brief Test whether two given Varnodes intersect
 ///
 /// This test must be conservative.  If it can't explicitly prove that the
@@ -1375,31 +1222,30 @@ bool ConsistencyChecker::readWriteInterference(const VarnodeTpl *vn,const OpTpl 
 /// If the Varnode is in the \e unique space, an OptimizationRecord for it is looked
 /// up based on its offset.  Information about how a p-code operator uses the Varnode
 /// is accumulated in the record.
-/// \param state is collection of OptimizationRecords associated with temporary Varnodes
+/// \param recs is collection of OptimizationRecords associated with temporary Varnodes
 /// \param vn is the given Varnode to check (which may or may not be temporary)
 /// \param i is the index of the operator using the Varnode (within its p-code section)
 /// \param inslot is the \e slot index of the Varnode within its operator
 /// \param secnum is the section number containing the operator
-void ConsistencyChecker::examineVn(UniqueState &state,
+void ConsistencyChecker::examineVn(map<uintb,OptimizeRecord> &recs,
 				   const VarnodeTpl *vn,uint4 i,int4 inslot,int4 secnum)
 {
   if (vn == (const VarnodeTpl *)0) return;
   if (!vn->getSpace().isUniqueSpace()) return;
   if (vn->getOffset().getType() != ConstTpl::real) return;
 
-  uintb offset = vn->getOffset().getReal();
-  int4 size = vn->getSize().getReal();
-  if (inslot >= 0) {
-    vector<OptimizeRecord*> defs;
-    state.getDefinitions(defs,offset,size);
-    for (vector<OptimizeRecord*>::iterator iter=defs.begin();iter!=defs.end();++iter) {
-      (*iter)->updateRead(i,inslot,secnum);
-    }
+  map<uintb,OptimizeRecord>::iterator iter;
+  iter = recs.insert( pair<uint4,OptimizeRecord>(vn->getOffset().getReal(),OptimizeRecord())).first;
+  if (inslot>=0) {
+    (*iter).second.readop = i;
+    (*iter).second.readcount += 1;
+    (*iter).second.inslot = inslot;
+    (*iter).second.readsection = secnum;
   }
   else {
-    OptimizeRecord rec(offset,size);
-    rec.updateWrite(i,secnum);
-    state.set(offset,size,rec);
+    (*iter).second.writeop = i;
+    (*iter).second.writecount += 1;
+    (*iter).second.writesection = secnum;
   }
 }
 
@@ -1408,9 +1254,9 @@ void ConsistencyChecker::examineVn(UniqueState &state,
 /// For each temporary Varnode, count how many times it is read from or written to
 /// in the given section of p-code operators.
 /// \param ct is the given Constructor
-/// \param state is the (initially empty) collection of count records
+/// \param recs is the (initially empty) collection of count records
 /// \param secnum is the given p-code section number
-void ConsistencyChecker::optimizeGather1(Constructor *ct,UniqueState &state,int4 secnum) const
+void ConsistencyChecker::optimizeGather1(Constructor *ct,map<uintb,OptimizeRecord> &recs,int4 secnum) const
 
 {
   ConstructTpl *tpl;
@@ -1425,10 +1271,10 @@ void ConsistencyChecker::optimizeGather1(Constructor *ct,UniqueState &state,int4
     const OpTpl *op = ops[i];
     for(uint4 j=0;j<op->numInput();++j) {
       const VarnodeTpl *vnin = op->getIn(j);
-      examineVn(state,vnin,i,j,secnum);
+      examineVn(recs,vnin,i,j,secnum);
     }
     const VarnodeTpl *vn = op->getOut();
-    examineVn(state,vn,i,-1,secnum);
+    examineVn(recs,vn,i,-1,secnum);
   }
 }
 
@@ -1438,9 +1284,9 @@ void ConsistencyChecker::optimizeGather1(Constructor *ct,UniqueState &state,int4
 /// for the section, and if it involves a temporary, mark it as both read and written, guaranteeing
 /// that the Varnode is not optimized away.
 /// \param ct is the given Constructor
-/// \param state is the collection of count records
+/// \param recs is the collection of count records
 /// \param secnum is the given p-code section number
-void ConsistencyChecker::optimizeGather2(Constructor *ct,UniqueState &state,int4 secnum) const
+void ConsistencyChecker::optimizeGather2(Constructor *ct,map<uintb,OptimizeRecord> &recs,int4 secnum) const
 
 {
   ConstructTpl *tpl;
@@ -1454,29 +1300,29 @@ void ConsistencyChecker::optimizeGather2(Constructor *ct,UniqueState &state,int4
   if (hand == (HandleTpl *)0) return;
   if (hand->getPtrSpace().isUniqueSpace()) {
     if (hand->getPtrOffset().getType() == ConstTpl::real) {
+      pair<map<uintb,OptimizeRecord>::iterator,bool> res;
       uintb offset = hand->getPtrOffset().getReal();
-      int4 size = hand->getPtrSize().getReal();
-      vector<OptimizeRecord*> defs;
-      state.getDefinitions(defs,offset,size);
-      for (vector<OptimizeRecord*>::iterator iter=defs.begin();iter!=defs.end();++iter) {
-	(*iter)->updateExport();
-	// NOTE: Could this just be updateRead?
-	// Technically, an exported handle could be written by the parent....
-      }
+      res = recs.insert( pair<uintb,OptimizeRecord>(offset,OptimizeRecord()));
+      (*res.first).second.writeop = 0;
+      (*res.first).second.readop = 0;
+      (*res.first).second.writecount = 2;
+      (*res.first).second.readcount = 2;
+      (*res.first).second.readsection = -2;
+      (*res.first).second.writesection = -2;
     }
   }
   if (hand->getSpace().isUniqueSpace()) {
     if ((hand->getPtrSpace().getType() == ConstTpl::real)&&
 	(hand->getPtrOffset().getType() == ConstTpl::real)) {
+      pair<map<uintb,OptimizeRecord>::iterator,bool> res;
       uintb offset = hand->getPtrOffset().getReal();
-      int4 size = hand->getPtrSize().getReal();
-      vector<OptimizeRecord*> defs;
-      state.getDefinitions(defs,offset,size);
-      for (vector<OptimizeRecord*>::iterator iter=defs.begin();iter!=defs.end();++iter) {
-	(*iter)->updateExport();
-	// NOTE: Could this just be updateRead?
-	// Technically, an exported handle could be written by the parent....
-      }
+      res = recs.insert( pair<uintb,OptimizeRecord>(offset,OptimizeRecord()));
+      (*res.first).second.writeop = 0;
+      (*res.first).second.readop = 0;
+      (*res.first).second.writecount = 2;
+      (*res.first).second.readcount = 2;
+      (*res.first).second.readsection = -2;
+      (*res.first).second.writesection = -2;
     }
   }
 }
@@ -1490,14 +1336,14 @@ void ConsistencyChecker::optimizeGather2(Constructor *ct,UniqueState &state,int4
 /// if propagation is forward, the Varnode must not cross another write.
 /// If all the requirements pass, return the record indicating that the COPY can be removed.
 /// \param ct is the Constructor owning the p-code
-/// \param state is the collection of OptimizeRecords to search
+/// \param recs is the collection of OptimizeRecords to search
 /// \return a passing OptimizeRecord or null
 const ConsistencyChecker::OptimizeRecord *ConsistencyChecker::findValidRule(Constructor *ct,
-									    const UniqueState &state) const
+									    const map<uintb,OptimizeRecord> &recs) const
 {
   map<uintb,OptimizeRecord>::const_iterator iter;
-  iter = state.begin();
-  while(iter!=state.end()) {
+  iter = recs.begin();
+  while(iter != recs.end()) {
     const OptimizeRecord &currec( (*iter).second );
     ++iter;
     if ((currec.writecount==1)&&(currec.readcount==1)&&(currec.readsection==currec.writesection)) {
@@ -1508,27 +1354,13 @@ const ConsistencyChecker::OptimizeRecord *ConsistencyChecker::findValidRule(Cons
       else
 	tpl = ct->getNamedTempl(currec.readsection);
       const vector<OpTpl *> &ops( tpl->getOpvec() );
-      const OpTpl *writeop = ops[ currec.writeop ];
-      const OpTpl *readop = ops[ currec.readop ];
+      const OpTpl *op = ops[ currec.readop ];
       if (currec.writeop >= currec.readop) // Read must come after write
 	throw SleighError("Read of temporary before write");
-
-      VarnodeTpl *writevn = writeop->getOut();
-      VarnodeTpl *readvn = readop->getIn(currec.inslot);
-      // Because the record can change size and position, we have to check if the varnode
-      // "connecting" the write and read ops is actually the same varnode. If not, then we can't
-      // optimize it out.
-      // There may be an opportunity here to re-write the size/offset when either the write or read
-      // op is a COPY, but I'll leave that for later discussion.
-      // Actually, maybe not. If the truncate would be of a handle, we can't.
-      if (*writevn != *readvn) {
-	continue;
-      }
-
-      if (readop->getOpcode() == CPUI_COPY) {
+      if (op->getOpcode() == CPUI_COPY) {
 	bool saverecord = true;
 	currec.opttype = 0;	// Read op is a COPY
-	const VarnodeTpl *vn = readop->getOut();
+	const VarnodeTpl *vn = op->getOut();
 	for(int4 i=currec.writeop+1;i<currec.readop;++i) { // Check for interference between write and read
 	  if (readWriteInterference(vn,ops[i],true)) {
 	    saverecord = false;
@@ -1538,10 +1370,11 @@ const ConsistencyChecker::OptimizeRecord *ConsistencyChecker::findValidRule(Cons
 	if (saverecord)
 	  return &currec;
       }
-      if (writeop->getOpcode() == CPUI_COPY) {
+      op = ops[ currec.writeop ];
+      if (op->getOpcode() == CPUI_COPY) {
 	bool saverecord = true;
 	currec.opttype = 1;	// Write op is a COPY
-	const VarnodeTpl *vn = writeop->getIn(0);
+	const VarnodeTpl *vn = op->getIn(0);
 	for(int4 i=currec.writeop+1;i<currec.readop;++i) { // Check for interference between write and read
 	  if (readWriteInterference(vn,ops[i],false)) {
 	    saverecord = false;
@@ -1598,13 +1431,13 @@ void ConsistencyChecker::applyOptimization(Constructor *ct,const OptimizeRecord 
 /// An error message is issued if a temporary is read but not written.
 /// A warning may be issued if a temporary is written but not read.
 /// \param ct is the Constructor
-/// \param state is the collection of records associated with each temporary Varnode
-void ConsistencyChecker::checkUnusedTemps(Constructor *ct,const UniqueState &state)
+/// \param recs is the collection of records associated with each temporary Varnode
+void ConsistencyChecker::checkUnusedTemps(Constructor *ct,const map<uintb,OptimizeRecord> &recs)
 
 {
   map<uintb,OptimizeRecord>::const_iterator iter;
-  iter = state.begin();
-  while(iter != state.end()) {
+  iter = recs.begin();
+  while(iter != recs.end()) {
     const OptimizeRecord &currec( (*iter).second );
     if (currec.readcount == 0) {
       if (printdeadwarning)
@@ -1652,19 +1485,19 @@ void ConsistencyChecker::optimize(Constructor *ct)
 
 {
   const OptimizeRecord *currec;
-  UniqueState state;
+  map<uintb,OptimizeRecord> recs;
   int4 numsections = ct->getNumSections();
   do {
-    state.clear();
+    recs.clear();
     for(int4 i=-1;i<numsections;++i) {
-      optimizeGather1(ct,state,i);
-      optimizeGather2(ct,state,i);
+      optimizeGather1(ct,recs,i);
+      optimizeGather2(ct,recs,i);
     }
-    currec = findValidRule(ct,state);
+    currec = findValidRule(ct,recs);
     if (currec != (const OptimizeRecord *)0)
       applyOptimization(ct,*currec);
   } while(currec != (const OptimizeRecord *)0);
-  checkUnusedTemps(ct,state);
+  checkUnusedTemps(ct,recs);
 }
 
 /// Warnings or errors for individual violations may be printed, depending on settings.
@@ -1754,13 +1587,6 @@ void ConsistencyChecker::optimizeAll(void)
       optimize(ct);
     }
   }
-}
-
-ostream& operator<<(ostream &os, const ConsistencyChecker::OptimizeRecord &rec) {
-  os << "{writeop=" << rec.writeop << " readop=" << rec.readop << " inslot=" << rec.inslot <<
-        " writecount=" << rec.writecount << " readcount=" << rec.readcount <<
-	" opttype=" << rec.opttype << "}";
-  return os;
 }
 
 /// Sort based on the containing Varnode, then on the bit boundary

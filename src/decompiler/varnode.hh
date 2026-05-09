@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * 
  *      http://www.apache.org/licenses/LICENSE-2.0
- *
+ * 
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -157,7 +157,6 @@ private:
   friend class VarnodeBank;
   friend class Merge;
   friend class Funcdata;
-  friend class CloneBlockOps;
   void updateCover(void) const;	///< Internal function for update coverage information
   void calcCover(void) const;	///< Turn on the Cover object for this Varnode
   void clearCover(void) const; ///< Turn off any coverage information
@@ -333,15 +332,13 @@ public:
   void setStopUpPropagation(void) { addlflags |= Varnode::stop_uppropagation; }	///< Stop up-propagation thru \b this
   void clearStopUpPropagation(void) { addlflags &= ~Varnode::stop_uppropagation; }	///< Stop up-propagation thru \b this
   void setImpliedField(void) { addlflags |= Varnode::has_implied_field; }	///< Mark \b this as having an implied field
-  bool updateType(Datatype *ct);	///< Set the Datatype if not locked
-  bool updateType(Datatype *ct,bool lock,bool over); ///< (Possibly) set the Datatype given various restrictions
+  bool updateType(Datatype *ct,bool lock,bool override); ///< (Possibly) set the Datatype given various restrictions
   void setStackStore(void) { addlflags |= Varnode::stack_store; } ///< Mark as produced by explicit CPUI_STORE
   void setLockedInput(void) { addlflags |= Varnode::locked_input; }	///< Mark as existing input, even if unused
   void copySymbol(const Varnode *vn); ///< Copy symbol info from \b vn
   void copySymbolIfValid(const Varnode *vn);	///< Copy symbol info from \b vn if constant value matches
   Datatype *getLocalType(bool &blockup) const; ///< Calculate type of Varnode based on local information
   bool isBooleanValue(bool useAnnotation) const;	///< Does \b this Varnode hold a formal boolean value
-  bool isZeroExtended(int4 baseSize) const;	///< Is \b this zero extended from something of the given size
   bool copyShadow(const Varnode *op2) const; ///< Are \b this and \b op2 copied from the same source?
   bool findSubpieceShadow(int4 leastByte,const Varnode *whole,int4 recurse) const;
   bool findPieceShadow(int4 leastByte,const Varnode *piece) const;
@@ -390,7 +387,6 @@ public:
   Varnode *findInput(int4 s,const Address &loc) const;		///< Find an input Varnode
   Varnode *findCoveredInput(int4 s,const Address &loc) const;	///< Find an input Varnode contained within this range
   Varnode *findCoveringInput(int4 s,const Address &loc) const;	///< Find an input Varnode covering a range
-  bool hasInputIntersection(int4 s,const Address &loc) const;	///< Check for input Varnode that overlaps the given range
   uint4 getCreateIndex(void) const { return create_index; }	///< Get the next creation index to be assigned
   VarnodeLocSet::const_iterator beginLoc(void) const { return loc_tree.begin(); }	///< Beginning of location list
   VarnodeLocSet::const_iterator endLoc(void) const { return loc_tree.end(); }		///< End of location list
@@ -414,6 +410,21 @@ public:
 #ifdef VARBANK_DEBUG
   void verifyIntegrity(void) const;		///< Verify the integrity of the container
 #endif
+};
+
+/// \brief Node for a forward traversal of a Varnode expression
+struct TraverseNode {
+  enum {
+    actionalt = 1,	///< Alternate path traverses a solid action or \e non-incidental COPY
+    indirect = 2,	///< Main path traverses an INDIRECT
+    indirectalt = 4,	///< Alternate path traverses an INDIRECT
+    lsb_truncated = 8,	///< Least significant byte(s) of original value have been truncated
+    concat_high = 0x10	///< Original value has been concatented as \e most significant portion
+  };
+  const Varnode *vn;		///< Varnode at the point of traversal
+  uint4 flags;			///< Flags associated with the node
+  TraverseNode(const Varnode *v,uint4 f) { vn = v; flags = f; }		///< Constructor
+  static bool isAlternatePathValid(const Varnode *vn,uint4 flags);
 };
 
 bool contiguous_test(Varnode *vn1,Varnode *vn2);	///< Test if Varnodes are pieces of a whole

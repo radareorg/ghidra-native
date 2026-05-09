@@ -49,40 +49,19 @@ public:
   /// \brief Enumeration of different boolean properties that can be assigned to a CALLOTHER
   enum userop_flags {
     annotation_assignment = 1,	///< Displayed as assignment, `in1 = in2`, where the first parameter is an annotation
-    no_operator = 2,		///< Don't emit special token, just emit the first input parameter as expression
-    display_string = 4		///< Emit as a string constant
+    no_operator = 2		///< Don't emit special token, just emit the first input parameter as expression
   };
-  /// \brief User-op class encoded as an enum
-  enum userop_type {
-    unspecialized = 1,			///< Encoding for UnspecializedPcodeOp
-    injected = 2,			///< InjectedUserOp
-    volatile_read = 3,			///< VolatileReadOp
-    volatile_write = 4,			///< VolatileWriteOp
-    segment = 5,			///< SegmentOp
-    jumpassist = 6,			///< JumpAssistOp
-    string_data = 7,			///< InternalStringOp
-    datatype = 8			///< DatatypeUserOp
-  };
-  static const uint4 BUILTIN_STRINGDATA;	///< Built-in id for the InternalStringOp
-  static const uint4 BUILTIN_VOLATILE_READ;	///< Built-in id for VolatileReadOp
-  static const uint4 BUILTIN_VOLATILE_WRITE;	///< Built-in id for VolatileWriteOp
-  static const uint4 BUILTIN_MEMCPY;		///< Built-in id for memcpy
-  static const uint4 BUILTIN_STRNCPY;		///< Built-in id for strcpy
-  static const uint4 BUILTIN_WCSNCPY;		///< Built-in id for wcsncpy
 protected:
   string name;			///< Low-level name of p-code operator
-  Architecture *glb;		///< Architecture owning the user defined op
-  uint4 type;			///< Encoded class type (userop_type)
   int4 useropindex;		///< Index passed in the CALLOTHER op
+  Architecture *glb;		///< Architecture owning the user defined op
   uint4 flags;			///< Boolean attributes of the CALLOTHER
 public:
-  UserPcodeOp(const string &nm,Architecture *g,uint4 tp,int4 ind) {
-    name = nm; glb = g; type = tp; useropindex = ind; flags = 0; }	///< Construct from name and index
+  UserPcodeOp(Architecture *g,const string &nm,int4 ind) {
+    name = nm; useropindex = ind; glb = g; flags = 0; }		///< Construct from name and index
   const string &getName(void) const { return name; }		///< Get the low-level name of the p-code op
-  uint4 getType(void) const { return type; }			///< Get the encoded class type
   int4 getIndex(void) const { return useropindex; }		///< Get the constant id of the op
-  uint4 getDisplay(void) const {
-    return (flags & (annotation_assignment | no_operator | display_string)); }	///< Get display type (0=functional)
+  uint4 getDisplay(void) const { return (flags & (annotation_assignment | no_operator)); }	///< Get display type (0=functional)
   virtual ~UserPcodeOp(void) {}					///< Destructor
 
   /// \brief Get the symbol representing this operation in decompiled code
@@ -93,19 +72,6 @@ public:
   /// \return the symbol as a string
   virtual string getOperatorName(const PcodeOp *op) const {
     return name; }
-
-  /// \brief Return the output data-type of the user-op if specified
-  ///
-  /// \param op is the instantiation of the user-op
-  /// \return the data-type or null to indicate the data-type is unspecified
-  virtual Datatype *getOutputLocal(const PcodeOp *op) const { return (Datatype *)0; }
-
-  /// \brief Return the input data-type to the user-op in the given slot
-  ///
-  /// \param op if the instantiation of the user-op
-  /// \param slot is the given input slot
-  /// \return the data-type or null to indicate the data-type is unspecified
-  virtual Datatype *getInputLocal(const PcodeOp *op,int4 slot) const { return (Datatype *)0; }
 
   /// \brief Assign a size to an annotation input to \b this userop
   ///
@@ -129,23 +95,8 @@ public:
 /// but still has an unknown effect.
 class UnspecializedPcodeOp : public UserPcodeOp {
 public:
-  UnspecializedPcodeOp(const string &nm,Architecture *g,int4 ind)
-    : UserPcodeOp(nm,g,unspecialized,ind) {}		///< Constructor
-  virtual void decode(Decoder &decoder) {}
-};
-
-/// \brief Generic user defined operation that provides input/output data-types
-///
-/// The CALLOTHER acts a source of data-type information within data-flow.
-class DatatypeUserOp : public UserPcodeOp {
-  Datatype *outType;		///< Data-type of the output
-  vector<Datatype *> inTypes;	///< Data-type of the input(s)
-public:
-  DatatypeUserOp(const string &nm,Architecture *g,int4 ind,Datatype *out,
-		 Datatype *in0=(Datatype *)0,Datatype *in1=(Datatype *)0,
-		 Datatype *in2=(Datatype *)0,Datatype *in3=(Datatype *)0);
-  virtual Datatype *getOutputLocal(const PcodeOp *op) const;
-  virtual Datatype *getInputLocal(const PcodeOp *op,int4 slot) const;
+  UnspecializedPcodeOp(Architecture *g,const string &nm,int4 ind)
+    : UserPcodeOp(g,nm,ind) {}		///< Constructor
   virtual void decode(Decoder &decoder) {}
 };
 
@@ -158,8 +109,8 @@ public:
 class InjectedUserOp : public UserPcodeOp {
   uint4 injectid;			///< The id of the injection object (to which this op maps)
 public:
-  InjectedUserOp(const string &nm,Architecture *g,int4 ind,int4 injid)
-    : UserPcodeOp(nm,g,injected,ind) { injectid = injid; }	///< Constructor
+  InjectedUserOp(Architecture *g,const string &nm,int4 ind,int4 injid)
+    : UserPcodeOp(g,nm,ind) { injectid = injid; }	///< Constructor
   uint4 getInjectId(void) const { return injectid; }	///< Get the id of the injection object
   virtual void decode(Decoder &decoder);
 };
@@ -175,8 +126,8 @@ class VolatileOp : public UserPcodeOp {
 protected:
   static string appendSize(const string &base,int4 size);	///< Append a suffix to a string encoding a specific size
 public:
-  VolatileOp(const string &nm,Architecture *g,uint4 tp,int4 ind)
-    : UserPcodeOp(nm,g,tp,ind) { }				///< Constructor
+  VolatileOp(Architecture *g,const string &nm,int4 ind)
+    : UserPcodeOp(g,nm,ind) { }					///< Constructor
   virtual void decode(Decoder &decoder) {}			///< Currently volatile ops only need their name
 };
 
@@ -187,10 +138,9 @@ public:
 /// is the actual value read from memory.
 class VolatileReadOp : public VolatileOp {
 public:
-  VolatileReadOp(const string &nm,Architecture *g,bool functional)
-    : VolatileOp(nm,g,volatile_read,BUILTIN_VOLATILE_READ) { flags = functional ? 0 : no_operator; }	///< Constructor
+  VolatileReadOp(Architecture *g,const string &nm,int4 ind,bool functional)
+    : VolatileOp(g,nm,ind) { flags = functional ? 0 : no_operator; }			///< Constructor
   virtual string getOperatorName(const PcodeOp *op) const;
-  virtual Datatype *getOutputLocal(const PcodeOp *op) const;
   virtual int4 extractAnnotationSize(const Varnode *vn,const PcodeOp *op);
 };
 
@@ -202,10 +152,9 @@ public:
 ///   - The Varnode value being written to the memory
 class VolatileWriteOp : public VolatileOp {
 public:
-  VolatileWriteOp(const string &nm,Architecture *g,bool functional)
-    : VolatileOp(nm,g,volatile_write,BUILTIN_VOLATILE_WRITE) { flags = functional ? 0 : annotation_assignment; }	///< Constructor
+  VolatileWriteOp(Architecture *g,const string &nm,int4 ind,bool functional)
+    : VolatileOp(g,nm,ind) { flags = functional ? 0 : annotation_assignment; }		///< Constructor
   virtual string getOperatorName(const PcodeOp *op) const;
-  virtual Datatype *getInputLocal(const PcodeOp *op,int4 slot) const;
   virtual int4 extractAnnotationSize(const Varnode *vn,const PcodeOp *op);
 };
 
@@ -221,7 +170,7 @@ public:
 /// constant inputs (matching the format determined by unify()).
 class TermPatternOp : public UserPcodeOp {
 public:
-  TermPatternOp(const string &nm,Architecture *g,uint4 tp,int4 ind) : UserPcodeOp(nm,g,tp,ind) {}	///< Constructor
+  TermPatternOp(Architecture *g,const string &nm,int4 ind) : UserPcodeOp(g,nm,ind) {}	///< Constructor
   virtual int4 getNumVariableTerms(void) const=0;		///< Get the number of input Varnodes expected
 
   /// \brief Gather the formal input Varnode objects given the root PcodeOp
@@ -269,7 +218,7 @@ class SegmentOp : public TermPatternOp {
   bool supportsfarpointer;	///< Is \b true if the joined pair base:near acts as a \b far pointer
   VarnodeData constresolve;	///< How to resolve constant near pointers
 public:
-  SegmentOp(const string &nm,Architecture *g,int4 ind);		///< Constructor
+  SegmentOp(Architecture *g,const string &nm,int4 ind);		///< Constructor
   AddrSpace *getSpace(void) const { return spc; }		///< Get the address space being pointed to
   bool hasFarPointerSupport(void) const { return supportsfarpointer; }	///< Return \b true, if \b this op supports far pointers
   int4 getBaseSize(void) const { return baseinsize; }		///< Get size in bytes of the base/segment value
@@ -305,17 +254,6 @@ public:
   virtual void decode(Decoder &decoder);
 };
 
-/// \brief An op that displays as an internal string
-///
-/// The user op takes no input parameters.  In the decompiler output, it displays as a quoted string.  The
-/// string is associated with the address assigned to the user op and is pulled from StringManager as \e internal.
-class InternalStringOp : public UserPcodeOp {
-public:
-  InternalStringOp(Architecture *g);	///< Constructor
-  virtual Datatype *getOutputLocal(const PcodeOp *op) const;
-  virtual void decode(Decoder &decoder) {}
-};
-
 /// \brief Manager/container for description objects (UserPcodeOp) of user defined p-code ops
 ///
 /// The description objects are referenced by the CALLOTHER constant id, (or by name during initialization).
@@ -324,22 +262,28 @@ public:
 /// may reassign a more specialized description object by parsing specific tags using
 /// on of \b this class's parse* methods.
 class UserOpManage {
-  Architecture *glb;			///< Architecture this manager is associated with
   vector<UserPcodeOp *> useroplist;	///< Description objects indexed by CALLOTHER constant id
-  map<uint4,UserPcodeOp *> builtinmap;	///< Map from builtin ids to description objects
   map<string,UserPcodeOp *> useropmap;	///< A map from the name of the user defined operation to a description object
   vector<SegmentOp *> segmentop;	///< Segment operations supported by this Architecture
+  VolatileReadOp *vol_read;		///< (Single) volatile read operation
+  VolatileWriteOp *vol_write;		///< (Single) volatile write operation
   void registerOp(UserPcodeOp *op);	///< Insert a new UserPcodeOp description object in the map(s)
 public:
   UserOpManage(void);			///< Construct an empty manager
   ~UserOpManage(void);			///< Destructor
-  void initialize(Architecture *g);	///< Initialize description objects for all user defined ops
+  void initialize(Architecture *glb);	///< Initialize description objects for all user defined ops
+  void setDefaults(Architecture *glb);	///< Create any required operations if they weren't explicitly defined
   int4 numSegmentOps(void) const { return segmentop.size(); }	///< Number of segment operations supported
 
-  UserPcodeOp *getOp(uint4 i) const;		///< Retrieve a user-op description object by index
-  UserPcodeOp *getOp(const string &nm) const;	///< Retrieve description by name
+  /// Retrieve a user-op description object by index
+  /// \param i is the index
+  /// \return the indicated user-op description
+  UserPcodeOp *getOp(int4 i) const {
+    if (i>=useroplist.size()) return (UserPcodeOp *)0;
+    return useroplist[i];
+  }
 
-  UserPcodeOp *registerBuiltin(uint4 i);	///< Make sure an active record exists for the given built-in op
+  UserPcodeOp *getOp(const string &nm) const;					///< Retrieve description by name
 
   /// Retrieve a segment-op description object by index
   /// \param i is the index
@@ -349,6 +293,8 @@ public:
     return segmentop[i];
   }
 
+  VolatileReadOp *getVolatileRead(void) const { return vol_read; }		///< Get (the) volatile read description
+  VolatileWriteOp *getVolatileWrite(void) const { return vol_write; }		///< Get (the) volatile write description
   void decodeSegmentOp(Decoder &decoder,Architecture *glb);			///< Parse a \<segmentop> element
   void decodeVolatile(Decoder &decoder,Architecture *glb);			///< Parse a \<volatile> element
   void decodeCallOtherFixup(Decoder &decoder,Architecture *glb);		///< Parse a \<callotherfixup> element

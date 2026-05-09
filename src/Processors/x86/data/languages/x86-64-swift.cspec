@@ -8,7 +8,7 @@
      <pointer_size value="8" />
      <wchar_size value="4" />
      <short_size value="2" />
-     <integer_size value="4" />
+     <integer_size value="8" />
      <long_size value="8" />
      <long_long_size value="8" />
      <float_size value="4" />
@@ -32,7 +32,7 @@
   </returnaddress>
   <default_proto>
     <prototype name="__swiftcall" extrapop="8" stackshift="8">
-      <!-- https://github.com/swiftlang/swift/blob/main/docs/ABI/CallingConventionSummary.rst#x86-64 -->
+      <!-- https://github.com/apple/swift/blob/main/docs/ABI/CallConvSummary.rst#x86-64 -->
       <input>
         <pentry minsize="8" maxsize="8" storage="hiddenret">
           <register name="RAX"/>
@@ -146,7 +146,7 @@
     </prototype>
   </default_proto>
   <prototype name="__thiscall" extrapop="8" stackshift="8">
-    <!-- https://github.com/swiftlang/swift/blob/main/docs/ABI/CallingConventionSummary.rst#x86-64 -->
+    <!-- https://github.com/apple/swift/blob/main/docs/ABI/CallConvSummary.rst#x86-64 -->
     <input>
       <pentry minsize="8" maxsize="8" storage="hiddenret">
         <register name="RAX"/>

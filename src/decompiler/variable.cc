@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * 
  *      http://www.apache.org/licenses/LICENSE-2.0
- *
+ * 
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,7 +15,6 @@
  */
 #include "variable.hh"
 #include "op.hh"
-#include "expression.hh"
 #include "database.hh"
 
 namespace ghidra {
@@ -298,27 +297,6 @@ void HighVariable::transferPiece(HighVariable *tv2)
   tv2->highflags &= ~(uint4)(intersectdirty | extendcoverdirty);
 }
 
-/// Except in specific circumstances, convert \b type into its stripped form.
-void HighVariable::stripType(void) const
-
-{
-  if (!type->hasStripped())
-    return;
-  type_metatype meta = type->getMetatype();
-  if (meta == TYPE_PARTIALUNION || meta == TYPE_PARTIALSTRUCT) {
-    if (symbol != (Symbol *)0 && symboloffset != -1) {	// If there is a bigger backing symbol
-	type_metatype submeta = symbol->getType()->getMetatype();
-	if (submeta == TYPE_STRUCT || submeta == TYPE_UNION)
-	  return;			// Don't strip the partial union
-    }
-  }
-  else if (type->isEnumType()) {
-    if (inst.size() == 1 && inst[0]->isConstant())	// Only preserve partial enum on a constant
-      return;
-  }
-  type = type->getStripped();
-}
-
 /// Only update if the cover is marked as \e dirty.
 /// Merge the covers of all Varnode instances.
 void HighVariable::updateInternalCover(void) const
@@ -408,7 +386,17 @@ void HighVariable::updateType(void) const
   vn = getTypeRepresentative();
 
   type = vn->getType();
-  stripType();
+  if (type->hasStripped()) {
+    if (type->getMetatype() == TYPE_PARTIALUNION) {
+      if (symbol != (Symbol *)0 && symboloffset != -1) {
+	type_metatype meta = symbol->getType()->getMetatype();
+	if (meta != TYPE_STRUCT && meta != TYPE_UNION)	// If partial union does not have a bigger backing symbol
+	  type = type->getStripped();			// strip the partial union
+      }
+    }
+    else
+      type = type->getStripped();
+  }
 				// Update lock flags
   flags &= ~Varnode::typelock;
   if (vn->isTypeLock())
@@ -545,23 +533,24 @@ SymbolEntry *HighVariable::getSymbolEntry(void) const
   return (SymbolEntry *)0;
 }
 
-/// If there is an associated Symbol, its data-type (or the appropriate piece) is assigned
-/// to \b this. The dirtying mechanism is disabled so that data-type cannot change.
-/// \param typeFactory is the factory used to construct any required piece
-void HighVariable::finalizeDatatype(TypeFactory *typeFactory)
+/// The data-type its dirtying mechanism is disabled.  The data-type will not change, unless
+/// this method is called again.
+/// \param tp is the data-type to set
+void HighVariable::finalizeDatatype(Datatype *tp)
 
 {
-  if (symbol == (Symbol *)0) return;
-  Datatype *cur = symbol->getType();
-  int4 off = symboloffset;
-  if (off < 0)
-    off = 0;
-  int4 sz = inst[0]->getSize();
-  Datatype *tp = typeFactory->getExactPiece(cur, off, sz);
-  if (tp == (Datatype *)0 || tp->getMetatype() == TYPE_UNKNOWN)
-    return;
   type = tp;
-  stripType();
+  if (type->hasStripped()) {
+    if (type->getMetatype() == TYPE_PARTIALUNION) {
+      if (symbol != (Symbol *)0 && symboloffset != -1) {
+	type_metatype meta = symbol->getType()->getMetatype();
+	if (meta != TYPE_STRUCT && meta != TYPE_UNION)	// If partial union does not have a bigger backing symbol
+	  type = type->getStripped();			// strip the partial union
+      }
+    }
+    else
+      type = type->getStripped();
+  }
   highflags |= type_finalized;
 }
 
@@ -847,7 +836,7 @@ void HighVariable::encode(Encoder &encoder) const
     if (symboloffset >= 0)
       encoder.writeSignedInteger(ATTRIB_OFFSET, symboloffset);
   }
-  getType()->encodeRef(encoder);
+  getType()->encode(encoder);
   for(int4 j=0;j<inst.size();++j) {
     encoder.openElement(ELEM_ADDR);
     encoder.writeUnsignedInteger(ATTRIB_REF, inst[j]->getCreateIndex());

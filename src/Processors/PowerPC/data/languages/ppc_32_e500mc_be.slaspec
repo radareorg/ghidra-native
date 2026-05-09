@@ -14,7 +14,7 @@
 #
 @define CTR_OFFSET "32"
 
-@define NoLegacyIntegerMultiplyAccumulate "1"
+@define NoLegacyIntegerMultiplyAccumulate
 
 @include "ppc_common.sinc"
 @include "quicciii.sinc"
