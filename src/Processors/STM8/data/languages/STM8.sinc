@@ -658,8 +658,8 @@ IdxOp: StackAddr8W	is op4_4=0xF ; StackAddr8W	{ export StackAddr8W; }
 	X_Y = (X_Y & 0xFF) * zext(A);
 	$(CC_C) = 0; $(CC_H) = 0;
 }
-# -		0101 0010	imm8	SUBW SP,#imm	SP := SP - imm8
-:SUBW SP, Imm8u		is Pre00 & op0_8=0x52 & SP ; Imm8u {
+# -		0101 0010	imm8	SUB SP,#imm	SP := SP - imm8
+:SUB SP, Imm8u		is Pre00 & op0_8=0x52 & SP ; Imm8u {
 	SP = SP - zext(Imm8u);
 }
 # -/90	0110 0010			DIV X/Y,A		Divide X/Y by A; 16-bit quotient in X/Y, remainder in A

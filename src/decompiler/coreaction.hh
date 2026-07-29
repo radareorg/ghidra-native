@@ -190,8 +190,8 @@ class ActionConstantPtr : public Action {
   static AddrSpace *searchForSpaceAttribute(Varnode *vn,PcodeOp *op);
   static AddrSpace *selectInferSpace(Varnode *vn,PcodeOp *op,const vector<AddrSpace *> &spaceList);
   static bool checkCopy(PcodeOp *op,Funcdata &data);
-  static SymbolEntry *isPointer(AddrSpace *spc,Varnode *vn,PcodeOp *op,int4 slot,
-				Address &rampoint,uintb &fullEncoding,Funcdata &data);
+  static MapEntry *isPointer(AddrSpace *spc,Varnode *vn,PcodeOp *op,int4 slot,
+			     Address &rampoint,uintb &fullEncoding,Funcdata &data);
 public:
   ActionConstantPtr(const string &g) : Action(0,"constantptr",g) {}	///< Constructor
   virtual void reset(Funcdata &data) { localcount = 0; }
@@ -220,6 +220,7 @@ public:
 ///   - Volatile Varnodes are converted read/write functions
 ///   - Varnodes whose values are not consumed are replaced with constant 0 Varnodes
 class ActionVarnodeProps : public Action {
+  void handleExtendedZero(Varnode *vn,Funcdata &data);
 public:
   ActionVarnodeProps(const string &g) : Action(0,"varnodeprops",g) {}	///< Constructor
   virtual Action *clone(const ActionGroupList &grouplist) const {
@@ -320,9 +321,10 @@ public:
 class ActionSetCasts : public Action {
   static void checkPointerIssues(PcodeOp *op,Varnode *vn,Funcdata &data);
   static bool testStructOffset0(Datatype *reqtype,Datatype *curtype,CastStrategy *castStrategy);
-  static bool tryResolutionAdjustment(PcodeOp *op,int4 slot,Funcdata &data);
+  static bool tryResolutionAdjustment(Datatype *dt,PcodeOp *op,int4 slot,Funcdata &data);
+  static bool tryResolutionCopy(PcodeOp *op,Funcdata &data);
   static bool isOpIdentical(Datatype *ct1,Datatype *ct2);
-  static int4 resolveUnion(PcodeOp *op,int4 slot,Funcdata &data);
+  static int4 resolveUnion(PcodeOp *op,int4 slot,Funcdata &data,CastStrategy *castStrategy);
   static int4 castOutput(PcodeOp *op,Funcdata &data,CastStrategy *castStrategy);
   static int4 castInput(PcodeOp *op,int4 slot,Funcdata &data,CastStrategy *castStrategy);
   static PcodeOp *insertPtrsubZero(PcodeOp *op,int4 slot,Datatype *ct,Funcdata &data);
@@ -509,6 +511,18 @@ public:
   virtual int4 apply(Funcdata &data);
 };
 
+/// \brief Remove blocks that do nothing after variable merging has occurred
+class ActionLateDoNothing : public Action {
+  static bool removingCreatesRedundancy(FlowBlock *bl);	///< Does removing the given block create a redundant branch point
+public:
+  ActionLateDoNothing(const string &g) : Action(0,"latedonothing",g) {}	///< Constructor
+  virtual Action *clone(const ActionGroupList &grouplist) const {
+    if (!grouplist.contains(getGroup())) return (Action *)0;
+    return new ActionLateDoNothing(getGroup());
+  }
+  virtual int4 apply(Funcdata &data);
+};
+
 /// \brief Get rid of \b redundant branches: duplicate edges between the same input and output block
 class ActionRedundBranch : public Action {
 public:
@@ -628,6 +642,7 @@ public:
 class ActionNormalizeSetup : public Action {
 public:
   ActionNormalizeSetup(const string &g) : Action(rule_onceperfunc,"normalizesetup",g) {}	///< Constructor
+  virtual void reset(Funcdata &data) { data.setNormalization(true); }
   virtual Action *clone(const ActionGroupList &grouplist) const {
     if (!grouplist.contains(getGroup())) return (Action *)0;
     return new ActionNormalizeSetup(getGroup());
