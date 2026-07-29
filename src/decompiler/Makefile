@@ -35,6 +35,13 @@ ifeq ($(OS),Darwin)
   OSDIR=mac_x86_64
 endif
 
+ifeq ($(OS),OpenBSD)
+ifeq ($(ARCH),amd64)
+  ARCH_TYPE=-m64
+  OSDIR=openbsd_x86_64
+endif
+endif
+
 CXX=g++ -std=c++11
 
 # Debug flags
@@ -83,7 +90,7 @@ DECCORE=capability architecture options graph cover block cast typeop database c
 	variable varmap jumptable emulate emulateutil flow userop expression multiprecision \
 	funcdata funcdata_block funcdata_op funcdata_varnode unionresolve pcodeinject \
 	heritage prefersplit rangeutil ruleaction subflow blockaction merge double \
-	transform constseq coreaction condexe override dynamic crc32 prettyprint \
+	transform constseq bitfield coreaction condexe override dynamic crc32 prettyprint \
 	printlanguage printc printjava memstate opbehavior paramid signature $(COREEXT_NAMES)
 # Files used for any project that use the sleigh decoder
 SLEIGH=	sleigh pcodeparse pcodecompile sleighbase slghsymbol \

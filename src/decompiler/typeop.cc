@@ -102,9 +102,10 @@ void TypeOp::registerInstructions(vector<TypeOp *> &inst,TypeFactory *tlst,
   inst[CPUI_CPOOLREF] = new TypeOpCpoolref(tlst);
   inst[CPUI_NEW] = new TypeOpNew(tlst);
   inst[CPUI_INSERT] = new TypeOpInsert(tlst);
-  inst[CPUI_EXTRACT] = new TypeOpExtract(tlst);
+  inst[CPUI_ZPULL] = new TypeOpZpull(tlst);
   inst[CPUI_POPCOUNT] = new TypeOpPopcount(tlst);
   inst[CPUI_LZCOUNT] = new TypeOpLzcount(tlst);
+  inst[CPUI_SPULL] = new TypeOpSpull(tlst);
 }
 
 /// Change basic data-type info (signed vs unsigned) and operator names ( '>>' vs '>>>' )
@@ -521,6 +522,7 @@ Datatype *TypeOpStore::getInputCast(const PcodeOp *op,int4 slot,const CastStrate
 
 {
   if (slot==0) return (Datatype *)0;
+  if (op->doesSpecialPrinting()) return (Datatype *)0;
   const Varnode *pointerVn = op->getIn(1);
   Datatype *pointerType = pointerVn->getHighTypeReadFacing(op);
   Datatype *pointedToType = pointerType;
@@ -1020,6 +1022,16 @@ TypeOpIntSless::TypeOpIntSless(TypeFactory *t)
   behave = new OpBehaviorIntSless();
 }
 
+void TypeOpIntSless::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " s< ";
+  Varnode::printRaw(s,op->getIn(1));
+}
+
 Datatype *TypeOpIntSless::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
 
 {
@@ -1044,6 +1056,16 @@ TypeOpIntSlessEqual::TypeOpIntSlessEqual(TypeFactory *t)
   opflags = PcodeOp::binary | PcodeOp::booloutput;
   addlflags = inherits_sign;
   behave = new OpBehaviorIntSlessEqual();
+}
+
+void TypeOpIntSlessEqual::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " s<= ";
+  Varnode::printRaw(s,op->getIn(1));
 }
 
 Datatype *TypeOpIntSlessEqual::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
@@ -1668,6 +1690,16 @@ Datatype *TypeOpIntSdiv::getInputCast(const PcodeOp *op,int4 slot,const CastStra
   return castStrategy->castStandard(reqtype,curtype,true,true);
 }
 
+void TypeOpIntSdiv::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " s/ ";
+  Varnode::printRaw(s,op->getIn(1));
+}
+
 TypeOpIntRem::TypeOpIntRem(TypeFactory *t)
   : TypeOpBinary(t,CPUI_INT_REM,"%",TYPE_UINT,TYPE_UINT)
 {
@@ -1694,6 +1726,16 @@ TypeOpIntSrem::TypeOpIntSrem(TypeFactory *t)
   opflags = PcodeOp::binary;
   addlflags = arithmetic_op | inherits_sign | inherits_sign_zero;
   behave = new OpBehaviorIntSrem();
+}
+
+void TypeOpIntSrem::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " s% ";
+  Varnode::printRaw(s,op->getIn(1));
 }
 
 Datatype *TypeOpIntSrem::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
@@ -1748,12 +1790,32 @@ TypeOpFloatEqual::TypeOpFloatEqual(TypeFactory *t,const Translate *trans)
   behave = new OpBehaviorFloatEqual(trans);
 }
 
+void TypeOpFloatEqual::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " f== ";
+  Varnode::printRaw(s,op->getIn(1));
+}
+
 TypeOpFloatNotEqual::TypeOpFloatNotEqual(TypeFactory *t,const Translate *trans)
   : TypeOpBinary(t,CPUI_FLOAT_NOTEQUAL,"!=",TYPE_BOOL,TYPE_FLOAT)
 {
   opflags = PcodeOp::binary | PcodeOp::booloutput | PcodeOp::commutative;
   addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatNotEqual(trans);
+}
+
+void TypeOpFloatNotEqual::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " f!= ";
+  Varnode::printRaw(s,op->getIn(1));
 }
 
 TypeOpFloatLess::TypeOpFloatLess(TypeFactory *t,const Translate *trans)
@@ -1764,12 +1826,32 @@ TypeOpFloatLess::TypeOpFloatLess(TypeFactory *t,const Translate *trans)
   behave = new OpBehaviorFloatLess(trans);
 }
 
+void TypeOpFloatLess::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " f< ";
+  Varnode::printRaw(s,op->getIn(1));
+}
+
 TypeOpFloatLessEqual::TypeOpFloatLessEqual(TypeFactory *t,const Translate *trans)
   : TypeOpBinary(t,CPUI_FLOAT_LESSEQUAL,"<=",TYPE_BOOL,TYPE_FLOAT)
 {
   opflags = PcodeOp::binary | PcodeOp::booloutput;
   addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatLessEqual(trans);
+}
+
+void TypeOpFloatLessEqual::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " f<= ";
+  Varnode::printRaw(s,op->getIn(1));
 }
 
 TypeOpFloatNan::TypeOpFloatNan(TypeFactory *t,const Translate *trans)
@@ -1788,12 +1870,32 @@ TypeOpFloatAdd::TypeOpFloatAdd(TypeFactory *t,const Translate *trans)
   behave = new OpBehaviorFloatAdd(trans);
 }
 
+void TypeOpFloatAdd::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " f+ ";
+  Varnode::printRaw(s,op->getIn(1));
+}
+
 TypeOpFloatDiv::TypeOpFloatDiv(TypeFactory *t,const Translate *trans)
   : TypeOpBinary(t,CPUI_FLOAT_DIV,"/",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::binary;
   addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatDiv(trans);
+}
+
+void TypeOpFloatDiv::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " f/ ";
+  Varnode::printRaw(s,op->getIn(1));
 }
 
 TypeOpFloatMult::TypeOpFloatMult(TypeFactory *t,const Translate *trans)
@@ -1804,6 +1906,16 @@ TypeOpFloatMult::TypeOpFloatMult(TypeFactory *t,const Translate *trans)
   behave = new OpBehaviorFloatMult(trans);
 }
 
+void TypeOpFloatMult::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " f* ";
+  Varnode::printRaw(s,op->getIn(1));
+}
+
 TypeOpFloatSub::TypeOpFloatSub(TypeFactory *t,const Translate *trans)
   : TypeOpBinary(t,CPUI_FLOAT_SUB,"-",TYPE_FLOAT,TYPE_FLOAT)
 {
@@ -1812,12 +1924,30 @@ TypeOpFloatSub::TypeOpFloatSub(TypeFactory *t,const Translate *trans)
   behave = new OpBehaviorFloatSub(trans);
 }
 
+void TypeOpFloatSub::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = ";
+  Varnode::printRaw(s,op->getIn(0));
+  s << " f- ";
+  Varnode::printRaw(s,op->getIn(1));
+}
+
 TypeOpFloatNeg::TypeOpFloatNeg(TypeFactory *t,const Translate *trans)
   : TypeOpUnary(t,CPUI_FLOAT_NEG,"-",TYPE_FLOAT,TYPE_FLOAT)
 {
   opflags = PcodeOp::unary;
   addlflags = floatingpoint_op;
   behave = new OpBehaviorFloatNeg(trans);
+}
+
+void TypeOpFloatNeg::printRaw(ostream &s,const PcodeOp *op)
+
+{
+  Varnode::printRaw(s,op->getOut());
+  s << " = f- ";
+  Varnode::printRaw(s,op->getIn(0));
 }
 
 TypeOpFloatAbs::TypeOpFloatAbs(TypeFactory *t,const Translate *trans)
@@ -2254,7 +2384,13 @@ Datatype *TypeOpPtradd::getInputCast(const PcodeOp *op,int4 slot,const CastStrat
 				// not the (possibly different) type of the HIGH
     Datatype *reqtype = op->getIn(0)->getTypeReadFacing(op);
     Datatype *curtype = op->getIn(0)->getHighTypeReadFacing(op);
-    return castStrategy->castStandard(reqtype,curtype,false,false);
+    if (reqtype->getMetatype() != TYPE_PTR) return reqtype;
+    if (curtype->getMetatype() != TYPE_PTR) return reqtype;
+    Datatype *reqbase = ((TypePointer *)reqtype)->getPtrTo();	// Go down exactly one level
+    Datatype *curbase = ((TypePointer *)curtype)->getPtrTo();
+    if (reqbase->getAlignSize() == curbase->getAlignSize())
+      return (Datatype *)0;
+    return reqtype;
   }
   return TypeOp::getInputCast(op,slot,castStrategy);
 }
@@ -2318,7 +2454,24 @@ Datatype *TypeOpPtrsub::getInputCast(const PcodeOp *op,int4 slot,const CastStrat
 				// not the (possibly different) type of the HIGH
     Datatype *reqtype = op->getIn(0)->getTypeReadFacing(op);
     Datatype *curtype = op->getIn(0)->getHighTypeReadFacing(op);
-    return castStrategy->castStandard(reqtype,curtype,false,false);
+    if (curtype == reqtype)
+      return (Datatype *)0;
+    if (reqtype->getMetatype() != TYPE_PTR) return reqtype;
+    if (curtype->getMetatype() != TYPE_PTR) return reqtype;
+    Datatype *reqbase = ((TypePointer *)reqtype)->getPtrTo();	// Go down exactly one level
+    Datatype *curbase = ((TypePointer *)curtype)->getPtrTo();
+    if (curbase->getMetatype() == TYPE_ARRAY && reqbase->getMetatype() == TYPE_ARRAY) {
+      curbase = ((TypeArray *)curbase)->getBase();
+      reqbase = ((TypeArray *)reqbase)->getBase();
+    }
+    while(reqbase->getTypedef() != (Datatype *)0)
+      reqbase = reqbase->getTypedef();
+    while(curbase->getTypedef() != (Datatype *)0)
+      curbase = curbase->getTypedef();
+
+    if (curbase == reqbase)
+      return (Datatype *)0;
+    return reqtype;
   }
   return TypeOp::getInputCast(op,slot,castStrategy);
 }
@@ -2512,24 +2665,75 @@ TypeOpInsert::TypeOpInsert(TypeFactory *t)
 Datatype *TypeOpInsert::getInputLocal(const PcodeOp *op,int4 slot) const
 
 {
-  if (slot == 0)
+  if (slot <= 1)
     return tlst->getBase(op->getIn(slot)->getSize(),TYPE_UNKNOWN);
   return TypeOpFunc::getInputLocal(op, slot);
 }
 
-TypeOpExtract::TypeOpExtract(TypeFactory *t)
-  : TypeOpFunc(t,CPUI_EXTRACT,"EXTRACT",TYPE_INT,TYPE_INT)
+Datatype *TypeOpInsert::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
+
+{
+  return (Datatype *)0;		// Never need casts
+}
+
+Datatype *TypeOpInsert::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
+
+{
+  return op->getOut()->getHighTypeDefFacing();
+}
+
+TypeOpZpull::TypeOpZpull(TypeFactory *t)
+  : TypeOpFunc(t,CPUI_ZPULL,"ZPULL",TYPE_UINT,TYPE_INT)
 {
   opflags = PcodeOp::ternary;
-  behave = new OpBehavior(CPUI_EXTRACT,false);	// Dummy behavior
+  behave = new OpBehavior(CPUI_ZPULL,false);	// Dummy behavior
 }
 
-Datatype *TypeOpExtract::getInputLocal(const PcodeOp *op,int4 slot) const
+Datatype *TypeOpZpull::getInputLocal(const PcodeOp *op,int4 slot) const
 
 {
   if (slot == 0)
     return tlst->getBase(op->getIn(slot)->getSize(),TYPE_UNKNOWN);
   return TypeOpFunc::getInputLocal(op, slot);
+}
+
+Datatype *TypeOpZpull::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
+
+{
+  return (Datatype *)0;		// Never need casts
+}
+
+Datatype *TypeOpZpull::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
+
+{
+  return op->getOut()->getHighTypeDefFacing();
+}
+
+TypeOpSpull::TypeOpSpull(TypeFactory *t)
+  : TypeOpFunc(t,CPUI_SPULL,"SPULL",TYPE_INT,TYPE_INT)
+{
+  opflags = PcodeOp::ternary;
+  behave = new OpBehavior(CPUI_SPULL,false);	// Dummy behavior
+}
+
+Datatype *TypeOpSpull::getInputLocal(const PcodeOp *op,int4 slot) const
+
+{
+  if (slot == 0)
+    return tlst->getBase(op->getIn(slot)->getSize(),TYPE_UNKNOWN);
+  return TypeOpFunc::getInputLocal(op, slot);
+}
+
+Datatype *TypeOpSpull::getInputCast(const PcodeOp *op,int4 slot,const CastStrategy *castStrategy) const
+
+{
+  return (Datatype *)0;		// Never need casts
+}
+
+Datatype *TypeOpSpull::getOutputToken(const PcodeOp *op,CastStrategy *castStrategy) const
+
+{
+  return op->getOut()->getHighTypeDefFacing();
 }
 
 TypeOpPopcount::TypeOpPopcount(TypeFactory *t)
