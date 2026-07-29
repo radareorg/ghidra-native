@@ -1,8 +1,8 @@
 diff --git a/src/decompiler/database.cc b/src/decompiler/database.cc
-index 6eab457..8d17f38 100644
+index 26b68a6..ff2ad05 100644
 --- a/src/decompiler/database.cc
 +++ b/src/decompiler/database.cc
-@@ -1805,9 +1805,10 @@ SymbolEntry *ScopeInternal::addMapInternal(Symbol *sym,uint4 exfl,const Address
+@@ -1958,7 +1958,8 @@ void ScopeInternal::addMapInternal(Symbol *sym,MapEntry *entry)
      string msg = "Symbol ";
      msg += sym->getName();
      msg += " extends beyond the end of the address space";
@@ -10,8 +10,5 @@ index 6eab457..8d17f38 100644
 +    fprintf (stderr, "%s\n", msg.c_str());
 +    //throw LowlevelError(msg);
    }
--    
-+
-   list<SymbolEntry>::iterator iter = rangemap->insert(initdata,addr.getOffset(),lastaddress.getOffset());
-   // Store reference to map in symbol
-   sym->mapentry.push_back(iter);
+     
+   entry->mapIterator = rangemap->insert(entry,entry->addr.getOffset(),lastaddress.getOffset());
