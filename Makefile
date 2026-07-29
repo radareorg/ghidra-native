@@ -46,7 +46,7 @@ sync-processors processors-sync: ghidra
 	$(MAKE) sync-sbpf
 
 sync-sbpf:
-	rm -rf ghidra_sBPF
+	rm -rf ghidra_sbpf
 	git clone https://github.com/daog1/ghidra_sbpf
 	mkdir -p src/Processors/sBPF
 	cp -rf ghidra_sbpf/* src/Processors/sBPF
