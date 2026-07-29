@@ -42,7 +42,6 @@ sync-processors processors-sync: ghidra
 	rm -rf src/Processors
 	cp -rf ghidra/Ghidra/Processors src/Processors
 	$(MAKE) sync-stm8
-	$(MAKE) sync-hexagon
 	$(MAKE) sync-wasm
 	$(MAKE) sync-sbpf
 
@@ -63,13 +62,6 @@ sync-stm8:
 	git clone https://github.com/esaulenka/ghidra_STM8
 	mkdir -p src/Processors/STM8
 	cp -rf ghidra_STM8/* src/Processors/STM8
-
-sync-hexagon:
-	git clone --depth=1 https://github.com/toshipiazza/ghidra-plugin-hexagon/
-	mkdir -p src/Processors/hexagon/data/languages
-	cp ghidra-plugin-hexagon/Ghidra/Processors/Hexagon/data/languages/* \
-		src/Processors/hexagon/data/languages
-	rm -rf ghidra-plugin-hexagon
 
 ghidra:
 	git clone https://github.com/NationalSecurityAgency/ghidra
