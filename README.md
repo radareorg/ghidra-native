@@ -19,3 +19,6 @@ Reasons behind forking ghidra decompiler code:
 * Reduce repository size shipping only the native parts (512MB -> 15MB)
 * Update processor sleigh and decompiler logic separately
 * Add 3rd party processors easily
+
+Unit tests for the decompiler patches live in `src/unittests/` and are run
+with `make test` (meson/ninja required); see `tests/README.md`.
