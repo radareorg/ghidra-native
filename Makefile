@@ -12,7 +12,7 @@ update sync: sync-processors sync-decompiler
 patch: patch.done
 
 patch.done:
-	for a in $(shell ls patches/*.patch | sort -n) ; do echo "patch -p1 < $$a" ; patch -p1 < $$a ; done
+	set -e; for a in $(shell ls patches/*.patch | sort -n) ; do echo "patch -p1 < $$a" ; patch -p1 < $$a ; done
 	touch patch.done
 
 massage:
