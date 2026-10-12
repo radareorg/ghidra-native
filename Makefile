@@ -1,7 +1,11 @@
-all:
+PYTHON?=python3
+
+all: patch
+	[ -d build/meson-private ] || meson setup build
+	meson compile -C build
 
 clean:
-	rm -f patch.done
+	if [ -d build/meson-private ]; then meson compile -C build --clean; fi
 
 mrproper: clean
 	git reset --hard
@@ -12,12 +16,11 @@ update sync: sync-processors sync-decompiler
 patch: patch.done
 
 patch.done:
-	set -e; for a in $(shell ls patches/*.patch | sort -n) ; do echo "patch -p1 < $$a" ; patch -p1 < $$a ; done
-	touch patch.done
+	$(PYTHON) scripts/apply_patches.py
 
 test: patch
-	[ -d tests/build ] || meson setup tests/build tests
-	meson test -C tests/build --print-errorlogs
+	if [ -d build/meson-private ]; then meson configure build -Dtests=true; else meson setup build -Dtests=true; fi
+	meson test -C build --print-errorlogs
 
 massage:
 	mkdir -p /tmp/patches

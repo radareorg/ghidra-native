@@ -22,8 +22,8 @@ or manually:
 
 ```
 make patch
-meson setup tests/build tests
-meson test -C tests/build --print-errorlogs
+meson setup build -Dtests=true
+meson test -C build --print-errorlogs
 ```
 
 On Windows, run the commands from a Visual Studio developer prompt
@@ -31,13 +31,12 @@ On Windows, run the commands from a Visual Studio developer prompt
 
 ```
 call "C:\Program Files\Microsoft Visual Studio\18\Professional\VC\Auxiliary\Build\vcvars64.bat"
-make patch
-meson setup tests\build tests
-meson test -C tests\build --print-errorlogs
+meson setup build -Dtests=true
+meson test -C build --print-errorlogs
 ```
 
 If the system has no zlib development package, meson falls back to the
-`zlib.wrap` file in `tests/subprojects/`.
+`zlib.wrap` file in `subprojects/`.
 
 ## Tests
 
