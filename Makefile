@@ -73,4 +73,4 @@ sync-stm8:
 ghidra:
 	git clone https://github.com/NationalSecurityAgency/ghidra
 
-.PHONY: all clean mrproper sync sync-decompiler sync-processors patch test
+.PHONY: all clean mrproper sync sync-decompiler sync-processors patch test sync-wasm
