@@ -15,6 +15,10 @@ patch.done:
 	set -e; for a in $(shell ls patches/*.patch | sort -n) ; do echo "patch -p1 < $$a" ; patch -p1 < $$a ; done
 	touch patch.done
 
+test: patch
+	[ -d tests/build ] || meson setup tests/build tests
+	meson test -C tests/build --print-errorlogs
+
 massage:
 	mkdir -p /tmp/patches
 	git reset --hard
@@ -66,4 +70,4 @@ sync-stm8:
 ghidra:
 	git clone https://github.com/NationalSecurityAgency/ghidra
 
-.PHONY: all sync sync-decompiler sync-processors
+.PHONY: all clean mrproper sync sync-decompiler sync-processors patch test

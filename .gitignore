@@ -2,3 +2,4 @@ ghidra_wasm
 ghidra_STM8
 ghidra
 ghidra_sbpf
+tests/build
