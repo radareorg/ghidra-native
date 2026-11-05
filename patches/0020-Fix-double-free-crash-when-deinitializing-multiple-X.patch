@@ -1,26 +1,65 @@
 diff --git a/src/decompiler/xml.cc b/src/decompiler/xml.cc
-index 6831da5..fb4a87c 100644
+index 6831da5..226d4fb 100644
 --- a/src/decompiler/xml.cc
 +++ b/src/decompiler/xml.cc
-@@ -101,7 +101,6 @@
+@@ -101,8 +101,6 @@
  
  namespace ghidra {
  
 -string Attributes::bogus_uri("http://unused.uri");
- 
+-
  /// \brief The XML character scanner
  ///
+ /// Tokenize a byte stream suitably for the main XML parser.  The scanner expects an ASCII or UTF-8
 diff --git a/src/decompiler/xml.hh b/src/decompiler/xml.hh
-index 7253301..3fff761 100644
+index 7253301..d9a5211 100644
 --- a/src/decompiler/xml.hh
 +++ b/src/decompiler/xml.hh
-@@ -42,8 +42,8 @@ using std::hex;
- /// This object is used to initialize the Element object but is not part of the final, in memory, DOM model.
+@@ -43,7 +43,9 @@ using std::hex;
  /// This also holds other properties of the element that are unused in this implementation,
  /// including the \e namespace URI.
-+#define bogus_uri "http://unused.uri"
  class Attributes {
 -  static string bogus_uri;		///< A placeholder for the namespace URI that should be attached to the element
++  /// A placeholder for the namespace URI that should be attached to the element.
++  /// It is never freed so several loaded copies of the library cannot double free it on exit.
++  static const string &bogus_uri(void) { static const string *uri = new string("http://unused.uri"); return *uri; }
  //  static string prefix;
    string *elementname;			///< The name of the XML element
    vector<string *> name;		///< List of names for each formal XML attribute
+@@ -54,12 +56,12 @@ public:
+     for(uint4 i=0;i<name.size();++i) { delete name[i]; delete value[i]; }
+     delete elementname;
+   }	///< Destructor
+-  const string &getelemURI(void) const { return bogus_uri; }	///< Get the namespace URI associated with this element
++  const string &getelemURI(void) const { return bogus_uri(); }	///< Get the namespace URI associated with this element
+   const string &getelemName(void) const { return *elementname; }	///< Get the name of this element
+   void add_attribute(string *nm,string *vl) { name.push_back(nm); value.push_back(vl); }	///< Add a formal attribute
+ 				// The official SAX interface
+   int4 getLength(void) const { return name.size(); }		///< Get the number of attributes associated with the element
+-  const string &getURI(int4 i) const { return bogus_uri; }	///< Get the namespace URI associated with the i-th attribute
++  const string &getURI(int4 i) const { return bogus_uri(); }	///< Get the namespace URI associated with the i-th attribute
+   const string &getLocalName(int4 i) const { return *name[i]; }	///< Get the local name of the i-th attribute
+   const string &getQName(int4 i) const { return *name[i]; }	///< Get the qualified name of the i-th attribute
+   //  int4 getIndex(const string &uri,const string &localName) const;
+@@ -73,7 +75,7 @@ public:
+   const string &getValue(const string &qualifiedName) const {
+     for(uint4 i=0;i<name.size();++i)
+       if (*name[i] == qualifiedName) return *value[i];
+-    return bogus_uri;
++    return bogus_uri();
+   }
+ };
+ 
+diff --git a/src/decompiler/xml.y b/src/decompiler/xml.y
+index 222e9d4..0768412 100644
+--- a/src/decompiler/xml.y
++++ b/src/decompiler/xml.y
+@@ -28,8 +28,6 @@
+ 
+ namespace ghidra {
+ 
+-string Attributes::bogus_uri("http://unused.uri");
+-
+ /// \brief The XML character scanner
+ ///
+ /// Tokenize a byte stream suitably for the main XML parser.  The scanner expects an ASCII or UTF-8

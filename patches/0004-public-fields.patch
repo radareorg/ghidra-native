@@ -12,10 +12,10 @@ index abe1701..b3d9d45 100644
    ParserContext(ContextCache *ccache,Translate *trans);	///< Constructor
    ~ParserContext(void);					///< Destructor
 diff --git a/src/decompiler/sleigh.hh b/src/decompiler/sleigh.hh
-index 95249cf..379ee73 100644
+index 8fabcd2..b9ded0f 100644
 --- a/src/decompiler/sleigh.hh
 +++ b/src/decompiler/sleigh.hh
-@@ -170,6 +170,7 @@ protected:
+@@ -175,6 +175,7 @@ protected:
    ParserContext *obtainContext(const Address &addr,ParserContext::parse_state state) const;
    void resolve(ParserContext &pos) const;	///< Generate a parse tree suitable for disassembly
    void resolveHandles(ParserContext &pos) const;	///< Prepare the parse tree for p-code generation
@@ -24,10 +24,10 @@ index 95249cf..379ee73 100644
    Sleigh(LoadImage *ld,ContextDatabase *c_db);		///< Constructor
    virtual ~Sleigh(void);				///< Destructor
 diff --git a/src/decompiler/type.hh b/src/decompiler/type.hh
-index cc0951c..d7b7533 100644
+index 9e71e19..9bbe875 100644
 --- a/src/decompiler/type.hh
 +++ b/src/decompiler/type.hh
-@@ -861,6 +861,7 @@ class TypeFactory {
+@@ -854,6 +854,7 @@ class TypeFactory {
    void insertWarning(Datatype *dt,string warn);	///< Register a new data-type warning with \b this factory
    void removeWarning(Datatype *dt);		///< Remove the warning associated with the given data-type
    void resolveIncompleteTypedefs(void);		///< Redefine incomplete typedefs of data-types that are now complete

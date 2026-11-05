@@ -8,6 +8,7 @@ GHIDRA_BASE_SRCS = \
 	pcoderaw.cc \
 	translate.cc \
 	opcodes.cc \
+	metatype.cc \
 	globalcontext.cc \
 	xml.cc
 

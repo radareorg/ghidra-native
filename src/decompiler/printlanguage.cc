@@ -242,7 +242,7 @@ void PrintLanguage::pushSymbolDetail(const Varnode *vn,const PcodeOp *op,bool is
   HighVariable *high = vn->getHigh();
   Symbol *sym = high->getSymbol();
   if (sym == (Symbol *)0) {
-    pushUnnamedLocation(high->getNameRepresentative()->getAddr(),vn,op);
+    pushUnnamedLocation(high->getNameRepresentative()->getAddr(),vn->getSize(),vn,op);
   }
   else {
     int4 symboloff = high->getSymbolOffset();
@@ -506,7 +506,7 @@ bool PrintLanguage::escapeCharacterData(ostream &s,const uint1 *buf,int4 count,i
   int4 skip = charsize;
   int4 codepoint = 0;
   while(i<count) {
-    codepoint = StringManager::getCodepoint(buf+i,charsize,bigend,skip);
+    codepoint = StringManager::getCodepoint(buf+i,count-i,charsize,bigend,skip);
     if (codepoint == 0 || codepoint == -1) break;
     printUnicode(s,codepoint);
     i += skip;

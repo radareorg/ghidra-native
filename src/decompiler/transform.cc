@@ -193,25 +193,18 @@ void TransformVar::createReplacement(Funcdata *fd)
       break;
     case TransformVar::piece:
     {
-      int4 bytePos = (int4)val;
-      if ((bytePos & 7) != 0)
+      int4 lsbOffset = (int4)val;	// Least significant bits to truncate
+      if ((lsbOffset & 7) != 0)
 	throw LowlevelError("Varnode piece is not byte aligned");
-      bytePos >>= 3;
-      if (vn->getSpace()->isBigEndian())
-	bytePos = vn->getSize() - bytePos - byteSize;
-      Address addr = vn->getAddr() + bytePos;
+      lsbOffset >>= 3;			// Least significant bytes to truncate
+      int4 addrOff = (vn->getSpace()->isBigEndian()) ? (vn->getSize() - lsbOffset - byteSize) : lsbOffset;
+      Address addr = vn->getAddr() + addrOff;
       addr.renormalize(byteSize);
       if (def == (TransformOp *)0)
 	replacement = fd->newVarnode(byteSize,addr);
       else
 	replacement = fd->newVarnodeOut(byteSize, addr, def->replacement);
-      fd->transferVarnodeProperties(vn,replacement,bytePos);
-      break;
-    }
-    case TransformVar::constant_iop:
-    {
-      PcodeOp *indeffect = PcodeOp::getOpFromConst(Address(fd->getArch()->getIopSpace(),val));
-      replacement = fd->newVarnodeIop(indeffect);
+      fd->transferVarnodeProperties(vn,replacement,lsbOffset);
       break;
     }
     default:
@@ -235,12 +228,18 @@ void TransformOp::createReplacement(Funcdata *fd)
     while(op->numInput() < input.size())
       fd->opInsertInput(op, (Varnode *)0, op->numInput()-1);
   }
+  else if ((special & TransformOp::op_indirect)!=0) {
+    PcodeOp *target = PcodeOp::getOpFromConst(op->getIn(1)->getAddr());
+    replacement = fd->newIndirect(target);
+    output->createReplacement(fd);
+    fd->opInsertBefore(replacement,op);
+  }
   else {
     replacement = fd->newOp(input.size(),op->getAddr());
     fd->opSetOpcode(replacement, opc);
     if (output != (TransformVar *)0)
       output->createReplacement(fd);
-    if (follow == (TransformOp *)0) {		// Can be inserted immediately
+    if (anchor == (TransformOp *)0) {		// Can be inserted immediately
       if (opc == CPUI_MULTIEQUAL)
 	fd->opInsertBegin(replacement, op->getParent());
       else
@@ -254,31 +253,20 @@ void TransformOp::createReplacement(Funcdata *fd)
 bool TransformOp::attemptInsertion(Funcdata *fd)
 
 {
-  if (follow != (TransformOp *)0) {
-    if (follow->follow == (TransformOp *)0) {	// Check if the follow is inserted
+  if (anchor != (TransformOp *)0) {
+    if (anchor->anchor == (TransformOp *)0) {	// Check if the follow is inserted
       if (opc == CPUI_MULTIEQUAL)
-	fd->opInsertBegin(replacement, follow->replacement->getParent());
+	fd->opInsertBegin(replacement, anchor->replacement->getParent());
+      else if ((special & insert_before) != 0)
+	fd->opInsertBefore(replacement,anchor->replacement);
       else
-	fd->opInsertBefore(replacement,follow->replacement);
-      follow = (TransformOp *)0;	// Mark that this has been inserted
+	fd->opInsertAfter(replacement,anchor->replacement);
+      anchor = (TransformOp *)0;	// Mark that this has been inserted
       return true;
     }
     return false;
   }
   return true;		// Already inserted
-}
-
-/// Prepare to build the transformed INDIRECT PcodeOp based on settings from the given INDIRECT.
-/// \param indOp is the given INDIRECT
-void TransformOp::inheritIndirect(PcodeOp *indOp)
-
-{
-  if (indOp->isIndirectCreation()) {
-    if (indOp->getIn(0)->isIndirectZero())
-      special |= TransformOp::indirect_creation;
-    else
-      special |= TransformOp::indirect_creation_possible_out;
-  }
 }
 
 void LanedRegister::LanedIterator::normalize(void)
@@ -405,18 +393,6 @@ TransformVar *TransformManager::newConstant(int4 size,int4 lsbOffset,uintb val)
   return res;
 }
 
-/// Used for creating INDIRECT placeholders.
-/// \param vn is the original iop parameter to the INDIRECT
-/// \return the new placeholder node
-TransformVar *TransformManager::newIop(Varnode *vn)
-
-{
-  newVarnodes.emplace_back();
-  TransformVar *res = &newVarnodes.back();
-  res->initialize(TransformVar::constant_iop,(Varnode *)0,vn->getSize()*8,vn->getSize(),vn->getOffset());
-  return res;
-}
-
 /// Given a single logical value within a larger Varnode, create a placeholder for
 /// that logical value.
 /// \param vn is the large Varnode
@@ -522,30 +498,59 @@ TransformOp *TransformManager::newOpReplace(int4 numParams,OpCode opc,PcodeOp *r
   rop.opc = opc;
   rop.special = TransformOp::op_replacement;
   rop.output = (TransformVar *)0;
-  rop.follow = (TransformOp *)0;
+  rop.anchor = (TransformOp *)0;
   rop.input.resize(numParams,(TransformVar *)0);
+  return &rop;
+}
+
+/// \brief Create a new placeholder op to replace an existing INDIRECT op
+///
+/// A placeholder for the new op is created. The replacement will have the same
+/// target op as the original.
+/// \param replace is the existing INDIRECT the new op will replace
+/// \return the new placeholder node
+TransformOp *TransformManager::newIndirectReplace(PcodeOp *replace)
+
+{
+  newOps.emplace_back();
+  TransformOp &rop(newOps.back());
+  rop.op = replace;
+  rop.replacement = (PcodeOp *)0;
+  rop.opc = CPUI_INDIRECT;
+  rop.special = TransformOp::op_replacement | TransformOp::op_indirect;
+  if (replace->isIndirectCreation()) {
+    if (replace->getIn(0)->isIndirectZero())
+      rop.special |= TransformOp::indirect_creation;
+    else
+      rop.special |= TransformOp::indirect_creation_possible_out;
+  }
+  rop.output = (TransformVar *)0;
+  rop.anchor = (TransformOp *)0;
+  rop.input.resize(1,(TransformVar *)0);
   return &rop;
 }
 
 /// \brief Create a new placeholder op that will not replace an existing op
 ///
 /// An uninitialized placeholder for the new op is created. When (if) the new op is created
-/// it will not replace an existing op.  The op that follows it must be given.
+/// it will not replace an existing op.  The new op is placed either before or after an anchor op
+/// depending on the value of \b position.
 /// \param numParams is the number of Varnode inputs intended for the new op
 /// \param opc is the opcode of the new op
-/// \param follow is the placeholder for the op that follow the new op when it is created
+/// \param anchor is the point where the new op is inserted
+/// \param position is either \e insert_before or \e insert_after
 /// \return the new placeholder node
-TransformOp *TransformManager::newOp(int4 numParams,OpCode opc,TransformOp *follow)
+TransformOp *TransformManager::newOp(int4 numParams,OpCode opc,TransformOp *anchor,uint4 position)
 
 {
   newOps.emplace_back();
   TransformOp &rop(newOps.back());
-  rop.op = follow->op;
+  rop.op = anchor->op;
   rop.replacement = (PcodeOp *)0;
   rop.opc = opc;
-  rop.special = 0;
+  rop.special = position;
   rop.output = (TransformVar *)0;
-  rop.follow = follow;
+  rop.anchor = anchor;
   rop.input.resize(numParams,(TransformVar *)0);
   return &rop;
 }
@@ -569,7 +574,7 @@ TransformOp *TransformManager::newPreexistingOp(int4 numParams,OpCode opc,PcodeO
   rop.opc = opc;
   rop.special = TransformOp::op_preexisting;
   rop.output = (TransformVar *)0;
-  rop.follow = (TransformOp *)0;
+  rop.anchor = (TransformOp *)0;
   rop.input.resize(numParams,(TransformVar *)0);
   return &rop;
 }

@@ -14,7 +14,7 @@ index 76dce9b..2df840a 100644
  
  /// \brief Exception indicating data was not available
 diff --git a/src/decompiler/sleigh.hh b/src/decompiler/sleigh.hh
-index 32ef856..f0a7461 100644
+index 8fabcd2..ba85de3 100644
 --- a/src/decompiler/sleigh.hh
 +++ b/src/decompiler/sleigh.hh
 @@ -21,6 +21,10 @@

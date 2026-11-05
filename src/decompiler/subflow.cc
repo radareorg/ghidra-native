@@ -539,7 +539,7 @@ bool SubvariableFlow::traceForward(ReplaceVarnode *rvn)
 	}
 	return false;
       }
-      if (((newmask & 1)!=0)&&(outvn->getSize()==flowsize)) {
+      if (((newmask & 1)!=0)&&(outvn->getSize()==flowsize)&&(bitsize >= 8 || (~newmask & outvn->getNZMask())==0)) {
 	addTerminalPatch(op,rvn);
 	hcount += 1;		// Dealt with this descendant
 	break;
@@ -1655,13 +1655,7 @@ int4 RuleSubvarCompZero::applyOp(PcodeOp *op,Funcdata &data)
 	if (vn0->isConstant()) return 0;
 	uintb mask0 = vn0->getConsume() & vn0->getNZMask();
 	uintb wholemask = calc_mask(vn0->getSize()) & mask0;
-	// We really need a popcnt here
-	// We want: if the number of bits that are both consumed
-	// and not known to be zero are "big" then don't continue
-	// because it doesn't look like a few bits getting manipulated
-	// within a status register
-	if ((wholemask & 0xff)==0xff) return 0;
-	if ((wholemask & 0xff00)==0xff00) return 0;
+	if (popcount(wholemask) >= 8) return 0;
       }
       break;
     default:
@@ -1799,15 +1793,17 @@ bool SplitFlow::addOp(PcodeOp *op,TransformVar *rvn,int4 slot)
   if (outvn->getDef() != (TransformOp *)0)
     return true;	// Already traversed
 
-  TransformOp *loOp = newOpReplace(op->numInput(), op->code(), op);
-  TransformOp *hiOp = newOpReplace(op->numInput(), op->code(), op);
+  TransformOp *loOp;
+  TransformOp *hiOp;
   int4 numParam = op->numInput();
   if (op->code() == CPUI_INDIRECT) {
-    opSetInput(loOp,newIop(op->getIn(1)),1);
-    opSetInput(hiOp,newIop(op->getIn(1)),1);
-    loOp->inheritIndirect(op);
-    hiOp->inheritIndirect(op);
+    loOp = newIndirectReplace(op);
+    hiOp = newIndirectReplace(op);
     numParam = 1;
+  }
+  else {
+    loOp = newOpReplace(op->numInput(), op->code(), op);
+    hiOp = newOpReplace(op->numInput(), op->code(), op);
   }
   for(int4 i=0;i<numParam;++i) {
     TransformVar *invn;
@@ -1880,7 +1876,7 @@ bool SplitFlow::traceForward(TransformVar *rvn)
       if (val < laneDescription.getSize(1) * 8)
 	return false;			// Must obliterate all high bits
       TransformOp *rop = newPreexistingOp(2,CPUI_INT_LEFT,op);		// Keep original shift
-      TransformOp *zextrop = newOp(1, CPUI_INT_ZEXT, rop);
+      TransformOp *zextrop = newOp(1, CPUI_INT_ZEXT, rop, TransformOp::insert_before);
       opSetInput(zextrop, rvn, 0);		// Input is just the low piece
       opSetOutput(zextrop, newUnique(laneDescription.getWholeSize()));
       opSetInput(rop, zextrop->getOut(), 0);
@@ -1904,7 +1900,7 @@ bool SplitFlow::traceForward(TransformVar *rvn)
       else {
 	uintb remainShift = val - laneDescription.getSize(0) * 8;
 	TransformOp *rop = newPreexistingOp(2,op->code(),op);
-	TransformOp *extrop = newOp(1, extOpCode, rop);
+	TransformOp *extrop = newOp(1, extOpCode, rop, TransformOp::insert_before);
 	opSetInput(extrop, rvn+1, 0);	// Input is the high piece
 	opSetOutput(extrop, newUnique(laneDescription.getWholeSize()));
 	opSetInput(rop, extrop->getOut(), 0);
@@ -2595,7 +2591,7 @@ void SplitDatatype::buildOutConcats(Varnode *rootVn,PcodeOp *previousOp,vector<V
       if (i<=0) break;
       preOp = concatOp;
       int4 sz = vn->getSize() + outVarnodes[i]->getSize();
-      Address addr = outVarnodes[i]->getAddr();
+      Address addr = baseAddr + (rootVn->getSize() - sz);
       addr.renormalize(sz);
       vn = data.newVarnodeOut(sz,addr,concatOp);
       if (!addressTied)
@@ -3032,7 +3028,22 @@ int4 RuleDumptyHumpLate::applyOp(PcodeOp *op,Funcdata &data)
   Varnode *vn = op->getIn(0);
   if (!vn->isWritten()) return 0;
   PcodeOp *pieceOp = vn->getDef();
-  if (pieceOp->code() != CPUI_PIECE) return 0;
+  OpCode opc = pieceOp->code();
+  if (opc == CPUI_SUBPIECE) {
+    // SUB(SUB(base,#c),#d)   =>  SUB(base,#c+#d)
+    Varnode *base = pieceOp->getIn(0);
+    data.opSetInput(op,base,0);
+    uintb trunc = op->getIn(1)->getOffset() + pieceOp->getIn(1)->getOffset();
+    if (trunc != op->getIn(1)->getOffset())
+      data.opSetInput(op,data.newConstant(4, trunc),1);
+    if (vn->hasNoDescend() && !vn->isAutoLive()) {
+      vector<PcodeOp *> scratch;
+      data.opDestroyRecursive(pieceOp, scratch);
+    }
+    return 1;
+  }
+  else if (opc != CPUI_PIECE)
+    return 0;
   Varnode *out = op->getOut();
   int4 outSize = out->getSize();
   int4 trunc = (int4)op->getIn(1)->getOffset();
@@ -3701,11 +3712,9 @@ bool LaneDivide::buildIndirect(PcodeOp *op,TransformVar *outVars,int4 numLanes,i
   TransformVar *inVn = setReplacement(op->getIn(0), numLanes, skipLanes);
   if (inVn == (TransformVar *)0) return false;
   for(int4 i=0;i<numLanes;++i) {
-    TransformOp *rop = newOpReplace(2, CPUI_INDIRECT, op);
+    TransformOp *rop = newIndirectReplace(op);
     opSetOutput(rop, outVars + i);
     opSetInput(rop,inVn + i, 0);
-    opSetInput(rop,newIop(op->getIn(1)),1);
-    rop->inheritIndirect(op);
   }
   return true;
 }
@@ -3734,9 +3743,14 @@ bool LaneDivide::buildStore(PcodeOp *op,int4 numLanes,int4 skipLanes)
   int4 ptrSize = origPtr->getSize();
   // Order lanes by pointer offset.  Least significant to most for little endian, or most significant to least for big endian.
   int8 bytePos = 0;	// Smallest pointer offset
+  TransformOp *lastOp = (TransformOp *)0;
   for(int4 count=0;count<numLanes;++count) {
     int4 i = spc->isBigEndian() ? numLanes -1 - count: count;	// little = least to most, big = most to least
-    TransformOp *ropStore = newOpReplace(3, CPUI_STORE, op);
+    TransformOp *ropStore;
+    if (lastOp == (TransformOp *)0)
+      ropStore = newPreexistingOp(3, CPUI_STORE, op);
+    else
+      ropStore = newOp(3, CPUI_STORE,lastOp, TransformOp::insert_after);
 
     // Construct the pointer
     TransformVar *ptrVn;
@@ -3744,7 +3758,7 @@ bool LaneDivide::buildStore(PcodeOp *op,int4 numLanes,int4 skipLanes)
       ptrVn = basePtr;
     else {
       ptrVn = newUnique(ptrSize);
-      TransformOp *addOp = newOp(2, CPUI_INT_ADD, ropStore);
+      TransformOp *addOp = newOp(2, CPUI_INT_ADD, ropStore, TransformOp::insert_before);
       opSetOutput(addOp,ptrVn);
       opSetInput(addOp,basePtr,0);
       opSetInput(addOp,newConstant(ptrSize, 0, bytePos), 1);
@@ -3754,6 +3768,7 @@ bool LaneDivide::buildStore(PcodeOp *op,int4 numLanes,int4 skipLanes)
     opSetInput(ropStore,ptrVn,1);
     opSetInput(ropStore,inVars+i,2);
     bytePos += description.getSize(skipLanes + i);
+    lastOp = ropStore;
   }
   return true;
 }
@@ -3791,7 +3806,7 @@ bool LaneDivide::buildLoad(PcodeOp *op,TransformVar *outVars,int4 numLanes,int4 
       ptrVn = basePtr;
     else {
       ptrVn = newUnique(ptrSize);
-      TransformOp *addOp = newOp(2, CPUI_INT_ADD, ropLoad);
+      TransformOp *addOp = newOp(2, CPUI_INT_ADD, ropLoad, TransformOp::insert_before);
       opSetOutput(addOp,ptrVn);
       opSetInput(addOp,basePtr,0);
       opSetInput(addOp,newConstant(ptrSize, 0, bytePos), 1);
@@ -3894,24 +3909,29 @@ bool LaneDivide::buildZext(PcodeOp *op,TransformVar *outVars,int4 numLanes,int4 
 {
   int4 inLanes,inSkip;
   Varnode *invn = op->getIn(0);
-  if (!description.restriction(numLanes, skipLanes, 0, invn->getSize(), inLanes, inSkip)) {
-    return false;
-  }
+  if (!invn->isConstant() || invn->getOffset() != 0) {
+    if (!description.restriction(numLanes, skipLanes, 0, invn->getSize(), inLanes, inSkip)) {
+      return false;
+    }
   // inSkip should always come back as equal to skipLanes
-  if (inLanes == 1) {
-    TransformOp *rop = newOpReplace(1, CPUI_COPY, op);
-    TransformVar *inVar = getPreexistingVarnode(invn);
-    opSetInput(rop,inVar,0);
-    opSetOutput(rop,outVars);
+    if (inLanes == 1) {
+      TransformOp *rop = newOpReplace(1, CPUI_COPY, op);
+      TransformVar *inVar = getPreexistingVarnode(invn);
+      opSetInput(rop,inVar,0);
+      opSetOutput(rop,outVars);
+    }
+    else {
+      TransformVar *inRvn = setReplacement(invn,inLanes,inSkip);
+      if (inRvn == (TransformVar *)0) return false;
+      for(int4 i=0;i<inLanes;++i) {
+	TransformOp *rop = newOpReplace(1, CPUI_COPY, op);
+	opSetInput(rop,inRvn+i,0);
+	opSetOutput(rop,outVars + i);
+      }
+    }
   }
   else {
-    TransformVar *inRvn = setReplacement(invn,inLanes,inSkip);
-    if (inRvn == (TransformVar *)0) return false;
-    for(int4 i=0;i<inLanes;++i) {
-      TransformOp *rop = newOpReplace(1, CPUI_COPY, op);
-      opSetInput(rop,inRvn+i,0);
-      opSetOutput(rop,outVars + i);
-    }
+    inLanes = 0;
   }
   for(int4 i=0;i<numLanes-inLanes;++i) {			// Write 0 constants to remaining lanes
     TransformOp *rop = newOpReplace(1, CPUI_COPY, op);
@@ -3949,7 +3969,7 @@ bool LaneDivide::traceForward(TransformVar *rvn,int4 numLanes,int4 skipLanes)
 	int4 outLanes,outSkip;
 	if (!description.restriction(numLanes, skipLanes, bytePos, outvn->getSize(), outLanes, outSkip)) {
 	  if (allowSubpieceTerminator) {
-	    int4 laneIndex = description.getBoundary(bytePos);
+	    int4 laneIndex = description.getBoundary(bytePos + description.getPosition(skipLanes));
 	    if (laneIndex < 0 || laneIndex >= description.getNumLanes())	// Does piece start on lane boundary?
 	      return false;
 	    if (description.getSize(laneIndex) <= outvn->getSize())		// Is the piece smaller than a lane?
@@ -3998,9 +4018,21 @@ bool LaneDivide::traceForward(TransformVar *rvn,int4 numLanes,int4 skipLanes)
 	break;
       }
       case CPUI_INT_RIGHT:
+      case CPUI_INT_LEFT:
       {
 	if (!op->getIn(1)->isConstant()) return false;	// Trace must come through op->getIn(0)
 	TransformVar *outRvn = setReplacement(outvn, numLanes, skipLanes);
+	if (outRvn == (TransformVar *)0) return false;
+	// Don't create the placeholder ops, let traceBackward make them
+	break;
+      }
+      case CPUI_INT_ZEXT:
+      {
+	// The traced lanes are the low lanes of the extension; the rest are zero lanes, which traceBackward builds
+	int4 outLanes,outSkip;
+	if (!description.extension(numLanes, skipLanes, 0, outvn->getSize(), outLanes, outSkip))
+	  return false;
+	TransformVar *outRvn = setReplacement(outvn,outLanes,outSkip);
 	if (outRvn == (TransformVar *)0) return false;
 	// Don't create the placeholder ops, let traceBackward make them
 	break;

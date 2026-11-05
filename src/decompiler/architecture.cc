@@ -33,7 +33,7 @@ using std::sqrt;
 vector<ArchitectureCapability *> ArchitectureCapability::thelist;
 
 const uint4 ArchitectureCapability::majorversion = 6;
-const uint4 ArchitectureCapability::minorversion = 1;
+const uint4 ArchitectureCapability::minorversion = 2;
 
 AttributeId ATTRIB_ADDRESS = AttributeId("address",148);
 AttributeId ATTRIB_ADJUSTVMA = AttributeId("adjustvma",103);
@@ -581,16 +581,6 @@ void Architecture::addSpacebase(AddrSpace *basespace,const string &nm,const Varn
   addSpacebasePointer(spc,ptrdata,truncSize,stackGrowth);
 }
 
-/// This routine is used by the initialization process to add
-/// address ranges to which there is never an (indirect) pointer
-/// Should only be called during initialization
-/// \param rng is the new range with no aliases to be added
-void Architecture::addNoHighPtr(const Range &rng)
-
-{
-  nohighptr.insertRange(rng.getSpace(),rng.getFirst(),rng.getLast());
-}
-
 /// This builds the \e universal Action for function transformation
 /// and instantiates the "decompile" root Action
 /// \param store may hold configuration information
@@ -688,7 +678,7 @@ void Architecture::cacheAddrSpaceProperties(void)
     AddrSpace *spc = copyList[i];
     if (spc == lastSpace) continue;
     lastSpace = spc;
-    if (spc->getDelay() == 0) continue;		// Don't put in a register space
+    if (spc->noHighPtrPossible()) continue;		// Don't put in a register space
     if (spc->getType() == IPTR_SPACEBASE) continue;
     if (spc->isOtherSpace()) continue;
     if (spc->isOverlay()) continue;
@@ -1464,25 +1454,17 @@ Address SegmentedResolver::resolve(uintb val,int4 sz,const Address &point,uintb 
   // In this case the address offset is not fully specified
   // we check if the rest is stored in a context variable
   // (as with near pointers)
-    if (segop->getResolve().space != (AddrSpace *)0) {
+    if (segop->getResolve().space != (AddrSpace *)0 && !point.isInvalid()) {
       uintb base = glb->context->getTrackedValue(segop->getResolve(),point);
-      fullEncoding = (base << 8 * innersz) + (val & calc_mask(innersz));
       vector<uintb> seginput;
       seginput.push_back(base);
       seginput.push_back(val);
-      val = segop->execute(seginput);
-      return Address(spc,AddrSpace::addressToByte(val,spc->getWordSize()));
+      fullEncoding = segop->execute(seginput);
+      return Address(spc,AddrSpace::addressToByte(fullEncoding,spc->getWordSize()));
     }
   }
-  else { // For anything else, consider it a "far" pointer
+  else { // For anything else, consider it a flat pointer
     fullEncoding = val;
-    int4 outersz = segop->getBaseSize();
-    uintb base = (val >> 8*innersz) & calc_mask(outersz);
-    val = val & calc_mask(innersz);
-    vector<uintb> seginput;
-    seginput.push_back(base);
-    seginput.push_back(val);
-    val = segop->execute(seginput);
     return Address(spc,AddrSpace::addressToByte(val,spc->getWordSize()));
   }
   return Address();		// Return invalid address

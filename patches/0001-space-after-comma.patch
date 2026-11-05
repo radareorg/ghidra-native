@@ -1,5 +1,5 @@
 diff --git a/src/decompiler/printc.cc b/src/decompiler/printc.cc
-index b2637c1..eac56f7 100644
+index e319f2c..6e40cb1 100644
 --- a/src/decompiler/printc.cc
 +++ b/src/decompiler/printc.cc
 @@ -54,7 +54,7 @@ OpToken PrintC::boolean_and = { "&&", "", 2, 22, false, OpToken::binary, 1, 0, (

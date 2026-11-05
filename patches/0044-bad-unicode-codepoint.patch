@@ -1,8 +1,8 @@
 diff --git a/src/decompiler/stringmanage.cc b/src/decompiler/stringmanage.cc
-index 6e60b4f..fb7e2eb 100644
+index 0f75a03..905b6d8 100644
 --- a/src/decompiler/stringmanage.cc
 +++ b/src/decompiler/stringmanage.cc
-@@ -40,14 +40,14 @@ void StringManager::writeUtf8(ostream &s,int4 codepoint)
+@@ -128,14 +128,14 @@ void StringManager::writeUtf8(ostream &s,int4 codepoint)
    int4 size;
  
    if (codepoint < 0)

@@ -1,8 +1,8 @@
 diff --git a/src/decompiler/database.cc b/src/decompiler/database.cc
-index 26b68a6..0089445 100644
+index a03f930..3c532d3 100644
 --- a/src/decompiler/database.cc
 +++ b/src/decompiler/database.cc
-@@ -140,6 +140,8 @@ Datatype *MapEntry::getSizedType(const Address &inaddr,int4 sz) const
+@@ -139,6 +139,8 @@ Datatype *MapEntry::getSizedType(const Address &inaddr,int4 sz) const
  {
    int4 off = (int4)(inaddr.getOffset() - addr.getOffset()) + offset;
    Datatype *cur = symbol->getType();
@@ -12,10 +12,10 @@ index 26b68a6..0089445 100644
  }
  
 diff --git a/src/decompiler/varmap.cc b/src/decompiler/varmap.cc
-index 6d51a72..0388f3b 100644
+index e9df4ad..e454fed 100644
 --- a/src/decompiler/varmap.cc
 +++ b/src/decompiler/varmap.cc
-@@ -1375,7 +1375,7 @@ void ScopeLocal::markUnaliased(const vector<uintb> &alias)
+@@ -1507,7 +1507,7 @@ void ScopeLocal::markUnaliased(const vector<uintb> &alias)
      // NOTE: this is primarily to reset aliasing between
      // stack parameters and stack locals
      if (aliason && (curoff - curalias > 0xffff)) aliason = false;

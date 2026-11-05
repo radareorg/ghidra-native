@@ -1,8 +1,8 @@
 diff --git a/src/decompiler/flow.cc b/src/decompiler/flow.cc
-index 178047f..78565eb 100644
+index 337b6c8..566c4b7 100644
 --- a/src/decompiler/flow.cc
 +++ b/src/decompiler/flow.cc
-@@ -1006,8 +1006,10 @@ void FlowInfo::connectBasic(void)
+@@ -1030,8 +1030,10 @@ void FlowInfo::connectBasic(void)
      op = *iter++;
      targ_op = *iter2++;
      bs = op->getParent();

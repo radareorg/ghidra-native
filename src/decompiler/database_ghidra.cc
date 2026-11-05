@@ -85,7 +85,7 @@ void ScopeGhidra::decodeHole(Decoder &decoder) const
     else if (attribId==ATTRIB_VOLATILE && decoder.readBool())
       flags |= Varnode::volatil;
   }
-  holes.insertRange(range.getSpace(),range.getFirst(),range.getLast());
+  holes.insertRange(range);
   decoder.closeElement(elemId);
   if (flags != 0) {
     ghidra->symboltab->setPropertyRange(flags,range);
@@ -142,7 +142,7 @@ Symbol *ScopeGhidra::dump2Cache(Decoder &decoder) const
   }
   if (sym != (Symbol *)0) {
     SymbolEntry *ent = sym->getFirstWholeMap();
-    if (ent != (SymbolEntry *)0  && !ent->isDynamic()) {
+    if (ent != (SymbolEntry *)0  && ent->isMapEntry()) {
       MapEntry *entry = (MapEntry *)ent;
       if (scope != cache) {	// We have a namespace cache
 	// With a global namespace, mark the address range as a "hole", so the same query won't
@@ -351,6 +351,39 @@ Funcdata *ScopeGhidra::resolveExternalRefFunction(ExternRefSymbol *sym) const
     }
   }
   return resFd;
+}
+
+MapEntry *ScopeGhidra::findSymbolBefore(const Address &addr,const Address &usepoint) const
+
+{
+  uintb off = addr.getOffset();
+  MapEntry *res = findContainer(addr, 1, usepoint);
+  if (res != (MapEntry *)0)
+    off = res->getAddr().getOffset();
+  if (off == 0)
+    return (MapEntry *)0;
+  if ((off & 7) == 0)
+    off -= 8;
+  else
+    off -= off & 7;
+  Address curAddr(addr.getSpace(),off);
+  return findContainer(curAddr,1,usepoint);
+}
+
+MapEntry *ScopeGhidra::findSymbolAfter(const Address &addr,const Address &usepoint) const
+
+{
+  uintb off = addr.getOffset();
+  MapEntry *res = findContainer(addr, 1, usepoint);
+  if (res != (MapEntry *)0)
+    off = res->getAddr().getOffset() + res->getSize() - 1;
+  if ((off & 7) != 0)
+    off -= off & 7;
+  off += 8;
+  if (off < addr.getOffset() || off > addr.getSpace()->getHighest())
+    return (MapEntry *)0;
+  Address curAddr(addr.getSpace(),off);
+  return findContainer(curAddr,1,usepoint);
 }
 
 MapEntry *ScopeGhidra::addSymbol(const string &nm,Datatype *ct,const Address &addr,const Address &usepoint)
